@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "analysis technical data"
+version = "0.1.0"
+description = ""
+authors = ["Christian Murschall <christian@murschall.net>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+h5py = "^3.9.0"
+numpy = "^1.25.1"
+pandas = "^2.0.3"
+matplotlib = "^3.7.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
