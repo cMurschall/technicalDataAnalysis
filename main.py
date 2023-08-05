@@ -1,10 +1,18 @@
+import random
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from setuptools._distutils.command.check import check
+import matplotlib.cm as cm
+import tsfel
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+import feature_extraction
 
 import data
+
 
 # plt.rcParams.update({'font.size': 30})
 
@@ -65,7 +73,6 @@ def plot_imu_sensors():
         axs[5].set_title('Roll IMU')
         axs[5].plot(df['timestamp'], df['roll'], color="black")
 
-
     # set x-axis label
     # format x-axis to show date as day month year
     plt.gcf().axes[5].xaxis.set_major_formatter(mdates.DateFormatter('%d.%m %H:%M'))
@@ -111,7 +118,6 @@ def plot_sensors_adc(adc=1):
         axs[4].set_title('Speed - ADC' + str(adc))
         axs[4].plot(df['time'][::every_nth], df['speed'][::every_nth], color='orange')
 
-
     # set x-axis label
     # format x-axis to show date as day month year
     plt.gcf().axes[4].xaxis.set_major_formatter(mdates.DateFormatter('%d.%m %H:%M'))
@@ -129,18 +135,11 @@ def plot_positions():
     fig, axs = plt.subplots(5, 4, figsize=(20, 20), sharex=True, sharey=True, dpi=200)
     axs = np.concatenate(axs)
     for j in range(0, data.count_journeys()):
-
         df_imu = data.read_data(j, 'IMU')
         # timestamp to datetime
         df_imu['timestamp'] = pd.to_datetime(df_imu['timestamp'], unit='s')
         df_imu["vel_x"] = df_imu["acc_x"] * df_imu['timestamp'].diff().dt.total_seconds()
         df_imu["pos_x"] = (df_imu["vel_x"] * df_imu['timestamp'].diff().dt.total_seconds()).cumsum()
-
-
-
-
-
-
 
         df_imu["vel_y"] = df_imu["acc_y"] * df_imu['timestamp'].diff().dt.total_seconds()
         df_imu["pos_y"] = (df_imu["vel_y"] * df_imu['timestamp'].diff().dt.total_seconds()).cumsum()
@@ -150,7 +149,7 @@ def plot_positions():
         print(f"Journey {j} distance: {(df_imu['distance'].max()) :.2f} m")
 
         axs[j].scatter(df_imu['pos_x'], df_imu['pos_y'], color='red', s=1)
-# plot distance over time
+        # plot distance over time
         # axs[j].plot(df_imu['timestamp'], df_imu['distance'], color='blue', alpha=.5)
         axs[j].set_title(f"J {j + 1} ({df_imu['distance'].max() :.0f} m)")
 
@@ -158,75 +157,137 @@ def plot_positions():
 
 
 def cut_into_chunks():
-    df = data.read_data(1, 'ADC1')
+    # make matplotlib color array with data.count_journeys() colors
+    colors = cm.rainbow(np.linspace(0, 1, data.count_journeys()))
 
-    # timestamp to datetimeq
-    df['time'] = pd.to_datetime(df['time'], unit='s')
+    for j in range(0, data.count_journeys()):
+        print(f"Journey {j}")
+        df = data.read_data(j, 'ADC1')
 
-    # integrage speed
-    df["distance"] = (np.abs(df["speed"] ) * df['time'].diff().dt.total_seconds()).cumsum().fillna(0)
+        # timestamp to datetimeq
+        df['time'] = pd.to_datetime(df['time'], unit='s')
 
+        # integrage speed
+        df["distance"] = (np.abs(df["speed"]) * df['time'].diff().dt.total_seconds()).cumsum().fillna(0)
 
+        # cut into chunks
+        chunk_length = .2
+        chunk_overlap = 0.05
 
-    # cut into chunks
-    chunk_length = 20
-    chunk_overlap = 0.05
+        bins = np.arange(0, df['distance'].max(), chunk_length)
+        chunks = []
 
+        # prepare 3d plot
+        # loop over bins
+        for i in range(0, len(bins) - 1):
+            # get chunk
+            chunk = df[(df['distance'] < bins[i + 1]) & (df['distance'] >= bins[i])]
 
-    bins = np.arange(0, df['distance'].max(), chunk_length)
-    chunks = []
+            fft = np.fft.rfft(chunk['ch0'])
+            fft_magnitude = np.abs(fft) / len(chunk['ch0'])
 
-    # prepare 3d plot
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
+            # sampling frequency (is supposed to be 20625 Hz )
+            fs = 1 / (((chunk['time'].max() - chunk['time'].min()).total_seconds()) / len(chunk['time']))
 
-    ax.legend()
-    ax.set_xlabel('Distance [m]')
-    ax.set_ylabel('Frequency [Hz]')
-    ax.set_zlabel('Power [dB]')
+            ft_freq = np.fft.rfftfreq(chunk['ch0'].size, d=(1 / fs))
+            idx = np.argsort(ft_freq)
 
-    # loop over bins
-    for i in range(0, len(bins) - 1):
-        # get chunk
-        chunk = df[(df['distance'] < bins[i + 1])  & (df['distance'] >= bins[i])]
+            plt.plot(ft_freq[idx], fft_magnitude[idx], c=colors[j], alpha=.2)
+            # append chunk to list
+            chunks.append(chunk)
 
-        test_slice = chunk
-        fft = np.fft.fft(test_slice['ch0'])
-        fft_magnitude = np.abs(fft) / len(test_slice['ch0'])
-
-        # sampling frequency (is supposed to be 20625 Hz )
-        fs = 1 / (((test_slice['time'].max() - test_slice['time'].min()).total_seconds()) / len(test_slice['time']))
-
-        ft_freq = np.fft.fftfreq(test_slice['ch0'].size, d=(1/fs))
-        idx = np.argsort(ft_freq)
-
-        ax.scatter(i, ft_freq[idx], fft_magnitude[idx])
-        # append chunk to list
-        chunks.append(chunk)
+    # set x label
+    plt.xlabel('Frequency [Hz]')
+    # set y label
+    plt.ylabel('Magnitude')
 
     plt.show()
 
 
+def cut_into_feature_chunks():
+    # make matplotlib color array with data.count_journeys() colors
+    colors = cm.rainbow(np.linspace(0, 1, data.count_journeys()))
+    cfg_file = tsfel.get_features_by_domain(domain='temporal')
 
-    # test_slice = chunks[int(len(chunks) / 2)]
-    # fft = np.fft.fft(test_slice['ch0'])
-    # fft_magnitude = np.abs(fft) / len(test_slice['ch0'])
-#
-    # # sampling frequency (is supposed to be 20625 Hz )
-    # fs = 1 / (((test_slice['time'].max() - test_slice['time'].min()).total_seconds())/len(test_slice['time']))
-#
-    # ft_freq = np.fft.fftfreq(test_slice['ch0'].size, d=1/fs)
-    # idx = np.argsort(ft_freq)
-#
-    # power_spectrum = np.abs(np.fft.fft(data))**2
-    # plt.plot(ft_freq[idx], fft_magnitude[idx])
-    # plt.show()
+    for j in range(0, data.count_journeys()):
+        print(f"Journey {j}")
+        df = data.read_data(j, 'ADC1')
+
+        # timestamp to datetimeq
+        df['time'] = pd.to_datetime(df['time'], unit='s')
+
+        # integrage speed
+        df["distance"] = (np.abs(df["speed"]) * df['time'].diff().dt.total_seconds()).cumsum().fillna(0)
+
+        # cut into chunks
+        chunk_length = 0.1
+        chunk_overlap = 0.05
+
+        bins = np.arange(0, df['distance'].max(), chunk_length)
+        chunks = []
+
+        # prepare 3d plot
+        # loop over bins
+        for i in range(0, len(bins) - 1):
+            # get chunk
+            chunk = df[(df['distance'] < bins[i + 1]) & (df['distance'] >= bins[i])].copy()
+
+            features = tsfel.time_series_features_extractor(cfg_file, chunk['ch0'], window_size=1, fs=20625, verbose=0)
+            print(features.size)
+
+
+def find_features():
+    cfg_file = tsfel.get_features_by_domain(json_path='features.json')
+
+    j = np.random.choice(range(0, data.count_journeys()))
+
+    features = np.empty((0, 27))
+
+
+    for j in range(0, data.count_journeys()):
+        print(f"Journey {j}")
+        df = data.read_data(j, 'ADC1')
+        # timestamp to datetimeq
+        df['time'] = pd.to_datetime(df['time'], unit='s')
+        # integrage speed
+        df["distance"] = (np.abs(df["speed"]) * df['time'].diff().dt.total_seconds()).cumsum().fillna(0)
+
+        chunk_length = 5
+        bins = np.arange(0, df['distance'].max(), chunk_length)
 
 
 
+        # loop over bins
+        for i in range(0, len(bins) - 1):
+            # get chunk
+            chunk = df[(df['distance'] < bins[i + 1]) & (df['distance'] >= bins[i])].copy()
+
+            signal = chunk['ch0'].values
+
+            f = feature_extraction.extract(signal)
+            features = np.vstack((features, f))
+
+    #scale our data
+    scaler = StandardScaler()
+    features = scaler.fit_transform(features)
+
+    # calculate pca from features
+    pca = PCA(n_components=5)
 
 
 
+    features_pca = pca.fit_transform(features)
+    # print pca explained variance in percent
+    # Using set_printoptions
+    np.set_printoptions(suppress=True)
+    print(pca.explained_variance_ratio_)
+
+    # plot pca
+    plt.scatter(features_pca[:, 0], features_pca[:, 1], color='red', s=2, alpha=0.3)
+    plt.scatter(features_pca[:, 0], features_pca[:, 2], color='green', s=2, alpha=0.3)
+    plt.scatter(features_pca[:, 0], features_pca[:, 3], color='blue', s=2, alpha=0.3)
+    plt.scatter(features_pca[:, 0], features_pca[:, 4], color='yellow', s=2, alpha=0.3)
+    plt.show()
 
 
 # if main file is executed
@@ -238,7 +299,4 @@ if __name__ == '__main__':
     # plot_sensors_adc(1)
     # plot_sensors_adc(2)
     # plot_imu_sensors()
-    cut_into_chunks()
-
-
-
+    find_features()
