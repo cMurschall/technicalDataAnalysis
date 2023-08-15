@@ -8,6 +8,17 @@ import matplotlib.cm as cm
 import tsfel
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+
+
+from keras.models import Sequential
+from keras.layers import LSTM, Input, Dropout
+from keras.layers import Dense
+from keras.layers import RepeatVector
+from keras.layers import TimeDistributed
+from keras.preprocessing.sequence import TimeseriesGenerator
+from keras.models import Model
+
 
 import feature_extraction
 
@@ -89,7 +100,7 @@ def plot_imu_sensors():
 
 def plot_sensors_adc(adc=1):
     # make a subplot with 5 rows and 1 column
-    fig, axs = plt.subplots(5, 1, figsize=(20, 20), sharex=True)
+    fig, axs = plt.subplots(6, 1, figsize=(20, 20), sharex=True)
     for j in range(0, data.count_journeys()):
         df = data.read_data(j, 'ADC' + str(adc))
         # timestamp to datetime
@@ -118,11 +129,14 @@ def plot_sensors_adc(adc=1):
         axs[4].set_title('Speed - ADC' + str(adc))
         axs[4].plot(df['time'][::every_nth], df['speed'][::every_nth], color='orange')
 
+        axs[5].set_title('Profile - ADC' + str(adc))
+        axs[5].plot(df['time'][::every_nth], df['ch0_local_distance'][::every_nth], color='orange')
+
     # set x-axis label
     # format x-axis to show date as day month year
-    plt.gcf().axes[4].xaxis.set_major_formatter(mdates.DateFormatter('%d.%m %H:%M'))
+    plt.gcf().axes[5].xaxis.set_major_formatter(mdates.DateFormatter('%d.%m %H:%M'))
     # rotate x-axis labels
-    plt.gcf().axes[4].tick_params(axis='x', rotation=45)
+    plt.gcf().axes[5].tick_params(axis='x', rotation=45)
     # set margin to avoid cut-off of labels
     plt.gcf().subplots_adjust(bottom=0.25)
 
@@ -239,19 +253,12 @@ def cut_into_feature_chunks():
 def find_features():
     cfg_file = tsfel.get_features_by_domain(json_path='features.json')
 
-    j = np.random.choice(range(0, data.count_journeys()))
-
-    features = np.empty((0, 27))
-
 
     for j in range(0, data.count_journeys()):
         print(f"Journey {j}")
         df = data.read_data(j, 'ADC1')
-        # timestamp to datetimeq
-        df['time'] = pd.to_datetime(df['time'], unit='s')
-        # integrage speed
-        df["distance"] = (np.abs(df["speed"]) * df['time'].diff().dt.total_seconds()).cumsum().fillna(0)
 
+        features = np.empty((0, feature_extraction.get_feature_size()[0]))
         chunk_length = 5
         bins = np.arange(0, df['distance'].max(), chunk_length)
 
@@ -262,31 +269,88 @@ def find_features():
             # get chunk
             chunk = df[(df['distance'] < bins[i + 1]) & (df['distance'] >= bins[i])].copy()
 
-            signal = chunk['ch0'].values
+            signal = chunk['ch0_local_distance'].values
 
             f = feature_extraction.extract(signal)
             features = np.vstack((features, f))
 
-    #scale our data
+        #scale our data
+        scaler = StandardScaler()
+        features = scaler.fit_transform(features)
+
+        # calculate pca from features
+        pca = PCA(n_components=5)
+
+
+        try:
+
+            features_pca = pca.fit_transform(features)
+            # print pca explained variance in percent
+            # Using set_printoptions
+            np.set_printoptions(suppress=True)
+            print(pca.explained_variance_ratio_)
+
+            # plot pca
+            plt.scatter(features_pca[:, 0], features_pca[:, 1], color='red', s=2, alpha=0.3)
+            plt.scatter(features_pca[:, 0], features_pca[:, 2], color='green', s=2, alpha=0.3)
+            plt.scatter(features_pca[:, 0], features_pca[:, 3], color='blue', s=2, alpha=0.3)
+            plt.scatter(features_pca[:, 0], features_pca[:, 4], color='yellow', s=2, alpha=0.3)
+        except:
+            print("error")
+    plt.show()
+
+
+def use_lstm_autoencoder():
+
+
+    def make_model(train_data_shape):
+        model = Sequential()
+        model.add(LSTM(128, input_shape=(train_data_shape[0], train_data_shape[1])))
+        model.add(Dropout(rate=0.2))
+
+        model.add(RepeatVector(train_data_shape[0]))
+
+        model.add(LSTM(128, return_sequences=True))
+        model.add(Dropout(rate=0.2))
+        model.add(TimeDistributed(Dense(train_data_shape[1])))
+        model.compile(optimizer='adam', loss='mae')
+        model.summary()
+        return model
+
+    chunk_maxLen = 0
+
+    # As required for LSTM networks, we require to reshape an input data into n_samples x timesteps x n_features.
+    # In this example, the n_features is 2. We will make timesteps = 3.
+    # With this, the resultant n_samples is 5 (as the input data has 9 rows).
+
+    adc_1 = data.read_as_chuncks(source='ADC1')
+    # adc_2 = data.read_as_chuncks(source='ADC2')
+
+    split = int(len(adc_1) * 0.8)
+    train, test = train_test_split(adc_1, test_size=0.2, shuffle=False)
+
+    seq_size = 30000  # Number of time steps to look back
+    features = ['time', 'ch0_local_distance']
+
+
+
     scaler = StandardScaler()
-    features = scaler.fit_transform(features)
+    scaler = scaler.fit(train['ch0_local_distance'].values.reshape(-1, 1))
 
-    # calculate pca from features
-    pca = PCA(n_components=5)
+    train['ch0_local_distance']= scaler.transform(train['ch0_local_distance'].values.reshape(-1, 1) )
+    test['ch0_local_distance'] = scaler.transform(test['ch0_local_distance'].values.reshape(-1, 1) )
 
 
 
-    features_pca = pca.fit_transform(features)
-    # print pca explained variance in percent
-    # Using set_printoptions
-    np.set_printoptions(suppress=True)
-    print(pca.explained_variance_ratio_)
+    model = make_model(train[features].shape)
 
-    # plot pca
-    plt.scatter(features_pca[:, 0], features_pca[:, 1], color='red', s=2, alpha=0.3)
-    plt.scatter(features_pca[:, 0], features_pca[:, 2], color='green', s=2, alpha=0.3)
-    plt.scatter(features_pca[:, 0], features_pca[:, 3], color='blue', s=2, alpha=0.3)
-    plt.scatter(features_pca[:, 0], features_pca[:, 4], color='yellow', s=2, alpha=0.3)
+    generator = TimeseriesGenerator(train[features], train[features], length=seq_size, batch_size=5000)
+    history = model.fit(generator, epochs=20, batch_size=5000, verbose=1)
+
+
+    plt.plot(history.history['loss'], label='Training loss')
+    plt.plot(history.history['val_loss'], label='Validation loss')
+    plt.legend()
     plt.show()
 
 
@@ -299,4 +363,5 @@ if __name__ == '__main__':
     # plot_sensors_adc(1)
     # plot_sensors_adc(2)
     # plot_imu_sensors()
-    find_features()
+    # find_features()
+    use_lstm_autoencoder()

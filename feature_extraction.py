@@ -2,6 +2,7 @@ import scipy
 import numpy as np
 import tsfel
 
+
 def calc_statistical_features(signal):
     """This function computes the statistical features of a signal.
 
@@ -108,7 +109,6 @@ def calc_spectral_features(signal):
     # Spectral variation
     features = np.append(features, np.sum(np.diff(signal) != 0))
 
-
     return features
 
 
@@ -174,19 +174,22 @@ def extract(signal):
     features = np.append(features, calc_spectral_features(signal))
 
     # Temporal
-    features = np.append(features, calc_temporal_features(signal))
+    # features = np.append(features, calc_temporal_features(signal))
 
     return features
 
 
+def get_feature_size():
+    """This function returns the size of the feature vector.
 
+    Returns
+    -------
+    size: int
+        Size of the feature vector
 
+    """
 
-
-
-
-
-
+    return extract(np.random.rand(100)).shape
 
 
 def calc_fft(signal, sampling_frequency):

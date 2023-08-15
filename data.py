@@ -57,4 +57,46 @@ def read_data(jrn, source):
         df = pd.DataFrame()
         for col in sensor_data.dtype.names:
             df[col] = sensor_data[col]
+
+        if source in ('ADC1', 'ADC2'):
+            # timestamp to datetime
+            df['time'] = pd.to_datetime(df['time'], unit='s')
+            # integrate speed
+            df["distance"] = (np.abs(df["speed"]) * df['time'].diff().dt.total_seconds()).cumsum().fillna(0)
+
+            # integrate speed
+            df["ch0_local_velocity"] = (np.abs(df["ch0"]) * df['time'].diff().dt.total_seconds()).fillna(0)
+            # integrate distance
+            df["ch0_local_distance"] = (np.abs(df["ch0_local_velocity"]) * df['time'].diff().dt.total_seconds()).fillna(
+                0)
         return df
+
+
+def read_as_chuncks(source, chunk_length=1):
+    file_name = f"chunks_{source}_{chunk_length}.pkl"
+
+    # if 'chunks.pkl' file exists, read it
+    if os.path.isfile(file_name):
+        df = pd.read_pickle(file_name)
+        return df
+
+    chunks = []
+    #  )
+    for j in range(0, count_journeys()):
+        print(f"Journey {j}")
+        df = read_data(j, source)
+
+        bins = np.arange(0, df['distance'].max(), chunk_length)
+        chunks = []
+
+        for i in range(0, len(bins) - 1):
+            # get chunk
+            chunk = df[(df['distance'] < bins[i + 1]) & (df['distance'] >= bins[i])].copy()
+            chunk['Journey'] = j
+            chunk['Bin'] = i
+            chunks.append(chunk)
+
+    df = pd.concat(chunks)
+    # store
+    pd.to_pickle(df, file_name)
+    return df
