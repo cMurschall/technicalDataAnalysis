@@ -19,6 +19,9 @@ from keras.layers import TimeDistributed
 from keras.preprocessing.sequence import TimeseriesGenerator
 from keras.models import Model
 from keras import regularizers
+from keras.models import load_model
+
+
 
 import feature_extraction
 
@@ -333,32 +336,54 @@ def use_lstm_autoencoder():
     scaler = ct.fit(adc1_data[features])
 
     df_loss = pd.DataFrame(columns=['Journey', 'Bin', 'Loss'])
+    df_journey_errors = pd.DataFrame(columns=['Journey', 'MeanAbsoluteError'])
+
 
     count_journeys = int(adc1_data['Journey'].max())
-    for journey in range(1):
-        print(f"Training on journey {journey}/{count_journeys}")
+    for journey in range(0, 2):
 
         df_journey = adc1_data[adc1_data['Journey'] == journey]
 
+        print(f"Training on journey {journey}/{count_journeys}. Distance: {df_journey['distance'].max():.2f} m, Max speed: {df_journey['speed'].max():.2} m/s, Duration: {(df_journey['time'].max() - df_journey['time'].min()).total_seconds() / 60:.1f} min")
         # scale
         features_transformed = scaler.transform(df_journey[features])
 
+
         count_bins = df_journey["Bin"].max()
-        for training_bin in range(count_bins):
-            train_x = features_transformed[df_journey['Bin'] == training_bin]
+
+        count_bins = 15
+        for training_bin in range(10, count_bins):
+            training_data = features_transformed[df_journey['Bin'] == training_bin]
             # df_bin = df_journey[df_journey['Bin'] == training_bin]
 
-            seq_size = int(len(train_x) / 100)  # Number of time steps to look back
-            print(f"Training on bin {training_bin}/{count_bins} with sequence size {seq_size}")
+            seq_size = int(len(training_data) / 100)  # Number of time steps to look back
 
-            generator = TimeseriesGenerator(train_x, train_x, length=seq_size, batch_size=100)
-            history = model.fit(generator, epochs=5, verbose=2)
+            generator = TimeseriesGenerator(training_data, training_data, length=seq_size, batch_size=100)
+            history = model.fit(generator, epochs=5, verbose=0)
 
-            new_df = pd.DataFrame([{'Journey': journey, 'Bin': training_bin, 'Loss': history.history['loss'][-1]}])
+            loss = history.history['loss'][-1]
+            if training_bin % 10 == 0:
+                print(f"Trained bin {training_bin}/{count_bins} with sequence size {seq_size}, loss: {loss:.4f}")
+
+            new_df = pd.DataFrame([{'Journey': journey, 'Bin': training_bin, 'Loss': loss}])
             df_loss = pd.concat([df_loss, new_df], ignore_index=True)
 
-        df_loss.to_csv('loss.csv')
-        model.save('model.h5')
+        journey_data = features_transformed.reshape(-1, 1, 2)
+
+        # this might take some time..
+        trainPredict = model.predict(journey_data, verbose=0)
+        train_mean_absolute_error_distance = np.mean(np.abs(trainPredict - journey_data), axis=1)[:, 1]
+        df_journey_errors = pd.concat([df_journey_errors, pd.DataFrame([{
+            'Journey': journey,
+            'MeanAbsoluteError': [train_mean_absolute_error_distance]
+        }])], ignore_index=True)
+
+        pd.to_pickle(df_journey_errors, 'errors.pkl')
+        pd.to_pickle(df_loss, 'loss.pkl')
+        model.save('model.keras')
+
+        test = pd.read_pickle('errors.pkl')
+
 
 
 
