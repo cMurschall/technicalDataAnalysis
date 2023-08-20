@@ -304,6 +304,7 @@ def find_features():
 
 
 def use_lstm_autoencoder():
+    # inspired by this paper: https://arxiv.org/pdf/2101.11539.pdf
     def make_model(train_data_shape):
         model = Sequential()
         model.add(LSTM(128, input_shape=(train_data_shape[1], train_data_shape[2])))
@@ -340,34 +341,39 @@ def use_lstm_autoencoder():
 
 
     count_journeys = int(adc1_data['Journey'].max())
-    for journey in range(0, 2):
+    for journey in range(0, count_journeys):
 
+        # we get all data for this journey
         df_journey = adc1_data[adc1_data['Journey'] == journey]
 
         print(f"Training on journey {journey}/{count_journeys}. Distance: {df_journey['distance'].max():.2f} m, Max speed: {df_journey['speed'].max():.2} m/s, Duration: {(df_journey['time'].max() - df_journey['time'].min()).total_seconds() / 60:.1f} min")
-        # scale
+        # scale intput data to our
         features_transformed = scaler.transform(df_journey[features])
 
-
         count_bins = df_journey["Bin"].max()
-
-        count_bins = 15
         for training_bin in range(10, count_bins):
-            training_data = features_transformed[df_journey['Bin'] == training_bin]
-            # df_bin = df_journey[df_journey['Bin'] == training_bin]
 
+            # get training data for this bin
+            training_data = features_transformed[df_journey['Bin'] == training_bin]
+
+            # we use 1% of the data as sequence size
             seq_size = int(len(training_data) / 100)  # Number of time steps to look back
 
+            # create generator => this seems to be deprecated, but is just do memory efficient
             generator = TimeseriesGenerator(training_data, training_data, length=seq_size, batch_size=100)
+
+            # training the model. We use 5 epochs, this is not much, but we have a ton of data, so we don't need more
             history = model.fit(generator, epochs=5, verbose=0)
 
             loss = history.history['loss'][-1]
             if training_bin % 10 == 0:
-                print(f"Trained bin {training_bin}/{count_bins} with sequence size {seq_size}, loss: {loss:.4f}")
+                print(f"   Trained bin {training_bin}/{count_bins} with sequence size {seq_size}, loss: {loss:.4f}")
 
             new_df = pd.DataFrame([{'Journey': journey, 'Bin': training_bin, 'Loss': loss}])
             df_loss = pd.concat([df_loss, new_df], ignore_index=True)
 
+
+        # lets evaluate the model for this journey
         journey_data = features_transformed.reshape(-1, 1, 2)
 
         # this might take some time..
@@ -378,12 +384,10 @@ def use_lstm_autoencoder():
             'MeanAbsoluteError': [train_mean_absolute_error_distance]
         }])], ignore_index=True)
 
+        # store our good states
         pd.to_pickle(df_journey_errors, 'errors.pkl')
         pd.to_pickle(df_loss, 'loss.pkl')
         model.save('model.keras')
-
-        test = pd.read_pickle('errors.pkl')
-
 
 
 
