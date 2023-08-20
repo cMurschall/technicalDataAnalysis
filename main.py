@@ -8,8 +8,8 @@ import matplotlib.cm as cm
 import tsfel
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import train_test_split
-
 
 from keras.models import Sequential
 from keras.layers import LSTM, Input, Dropout
@@ -18,7 +18,7 @@ from keras.layers import RepeatVector
 from keras.layers import TimeDistributed
 from keras.preprocessing.sequence import TimeseriesGenerator
 from keras.models import Model
-
+from keras import regularizers
 
 import feature_extraction
 
@@ -252,7 +252,7 @@ def cut_into_feature_chunks():
 
 def find_features():
     cfg_file = tsfel.get_features_by_domain(json_path='features.json')
-
+    colors = cm.rainbow(np.linspace(0, 1, data.count_journeys()))
 
     for j in range(0, data.count_journeys()):
         print(f"Journey {j}")
@@ -262,25 +262,24 @@ def find_features():
         chunk_length = 5
         bins = np.arange(0, df['distance'].max(), chunk_length)
 
-
-
         # loop over bins
         for i in range(0, len(bins) - 1):
             # get chunk
             chunk = df[(df['distance'] < bins[i + 1]) & (df['distance'] >= bins[i])].copy()
 
-            signal = chunk['ch0_local_distance'].values
+            signal = chunk['ch0'].values
+
+            signal = np.abs(np.fft.fft(signal))
 
             f = feature_extraction.extract(signal)
             features = np.vstack((features, f))
 
-        #scale our data
+        # scale our data
         scaler = StandardScaler()
         features = scaler.fit_transform(features)
 
         # calculate pca from features
         pca = PCA(n_components=5)
-
 
         try:
 
@@ -288,70 +287,82 @@ def find_features():
             # print pca explained variance in percent
             # Using set_printoptions
             np.set_printoptions(suppress=True)
-            print(pca.explained_variance_ratio_)
+            print(
+                f"explained variances: {pca.explained_variance_ratio_}, total: {np.sum(pca.explained_variance_ratio_):.4f}")
 
             # plot pca
-            plt.scatter(features_pca[:, 0], features_pca[:, 1], color='red', s=2, alpha=0.3)
-            plt.scatter(features_pca[:, 0], features_pca[:, 2], color='green', s=2, alpha=0.3)
-            plt.scatter(features_pca[:, 0], features_pca[:, 3], color='blue', s=2, alpha=0.3)
-            plt.scatter(features_pca[:, 0], features_pca[:, 4], color='yellow', s=2, alpha=0.3)
+            plt.scatter(features_pca[:, 0], features_pca[:, 1], color=colors[j], s=2, alpha=0.3)
+            plt.scatter(features_pca[:, 0], features_pca[:, 2], color=colors[j], s=2, alpha=0.3)
+            # plt.scatter(features_pca[:, 0], features_pca[:, 3], color='blue', s=2, alpha=0.3)
+            # plt.scatter(features_pca[:, 0], features_pca[:, 4], color='yellow', s=2, alpha=0.3)
         except:
             print("error")
     plt.show()
 
 
 def use_lstm_autoencoder():
-
-
     def make_model(train_data_shape):
         model = Sequential()
-        model.add(LSTM(128, input_shape=(train_data_shape[0], train_data_shape[1])))
+        model.add(LSTM(128, input_shape=(train_data_shape[1], train_data_shape[2])))
         model.add(Dropout(rate=0.2))
 
-        model.add(RepeatVector(train_data_shape[0]))
+        model.add(RepeatVector(train_data_shape[1]))
 
         model.add(LSTM(128, return_sequences=True))
         model.add(Dropout(rate=0.2))
-        model.add(TimeDistributed(Dense(train_data_shape[1])))
+        model.add(TimeDistributed(Dense(train_data_shape[2])))
         model.compile(optimizer='adam', loss='mae')
         model.summary()
         return model
 
-    chunk_maxLen = 0
+    # [samples, timesteps, features]
+    features = ['speed', 'ch0_local_distance']
+    model = make_model((None, 1, len(features)))
 
-    # As required for LSTM networks, we require to reshape an input data into n_samples x timesteps x n_features.
-    # In this example, the n_features is 2. We will make timesteps = 3.
-    # With this, the resultant n_samples is 5 (as the input data has 9 rows).
+    adc1_data = data.read_as_chuncked(source='ADC1')
 
-    adc_1 = data.read_as_chuncks(source='ADC1')
+    adc1_data["speed"] = np.abs(adc1_data["speed"])
+
     # adc_2 = data.read_as_chuncks(source='ADC2')
 
-    split = int(len(adc_1) * 0.8)
-    train, test = train_test_split(adc_1, test_size=0.2, shuffle=False)
-
-    seq_size = 30000  # Number of time steps to look back
-    features = ['time', 'ch0_local_distance']
+    ct = ColumnTransformer([
+        ('somename', StandardScaler(), features)
+    ], remainder='passthrough')
 
 
+    scaler = ct.fit(adc1_data[features])
 
-    scaler = StandardScaler()
-    scaler = scaler.fit(train['ch0_local_distance'].values.reshape(-1, 1))
+    df_loss = pd.DataFrame(columns=['Journey', 'Bin', 'Loss'])
 
-    train['ch0_local_distance']= scaler.transform(train['ch0_local_distance'].values.reshape(-1, 1) )
-    test['ch0_local_distance'] = scaler.transform(test['ch0_local_distance'].values.reshape(-1, 1) )
+    count_journeys = int(adc1_data['Journey'].max())
+    for journey in range(1):
+        print(f"Training on journey {journey}/{count_journeys}")
+
+        df_journey = adc1_data[adc1_data['Journey'] == journey]
+
+        # scale
+        features_transformed = scaler.transform(df_journey[features])
+
+        count_bins = df_journey["Bin"].max()
+        for training_bin in range(count_bins):
+            train_x = features_transformed[df_journey['Bin'] == training_bin]
+            # df_bin = df_journey[df_journey['Bin'] == training_bin]
+
+            seq_size = int(len(train_x) / 100)  # Number of time steps to look back
+            print(f"Training on bin {training_bin}/{count_bins} with sequence size {seq_size}")
+
+            generator = TimeseriesGenerator(train_x, train_x, length=seq_size, batch_size=100)
+            history = model.fit(generator, epochs=5, verbose=2)
+
+            new_df = pd.DataFrame([{'Journey': journey, 'Bin': training_bin, 'Loss': history.history['loss'][-1]}])
+            df_loss = pd.concat([df_loss, new_df], ignore_index=True)
+
+        df_loss.to_csv('loss.csv')
+        model.save('model.h5')
 
 
 
-    model = make_model(train[features].shape)
 
-    generator = TimeseriesGenerator(train[features], train[features], length=seq_size, batch_size=5000)
-    history = model.fit(generator, epochs=20, batch_size=5000, verbose=1)
-
-
-    plt.plot(history.history['loss'], label='Training loss')
-    plt.plot(history.history['val_loss'], label='Validation loss')
-    plt.legend()
-    plt.show()
 
 
 # if main file is executed
@@ -364,4 +375,5 @@ if __name__ == '__main__':
     # plot_sensors_adc(2)
     # plot_imu_sensors()
     # find_features()
+
     use_lstm_autoencoder()

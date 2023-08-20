@@ -67,36 +67,40 @@ def read_data(jrn, source):
             # integrate speed
             df["ch0_local_velocity"] = (np.abs(df["ch0"]) * df['time'].diff().dt.total_seconds()).fillna(0)
             # integrate distance
-            df["ch0_local_distance"] = (np.abs(df["ch0_local_velocity"]) * df['time'].diff().dt.total_seconds()).fillna(
-                0)
+            df["ch0_local_distance"] = (np.abs(df["ch0_local_velocity"]) * df['time'].diff().dt.total_seconds()).fillna(0)
         return df
 
 
-def read_as_chuncks(source, chunk_length=1):
-    file_name = f"chunks_{source}_{chunk_length}.pkl"
-
-    # if 'chunks.pkl' file exists, read it
-    if os.path.isfile(file_name):
+def read_as_chuncked(source, chunk_length=0.3):
+    file_name = f"{source}_{chunk_length}.h5"
+    if os.path.exists(file_name):
+        print(f"Reading from {file_name}")
         df = pd.read_pickle(file_name)
         return df
 
-    chunks = []
-    #  )
-    for j in range(0, count_journeys()):
+    print(f"Creating {file_name}")
+    data = []
+    # count_journeys()
+    for j in range(3):
         print(f"Journey {j}")
-        df = read_data(j, source)
+        df_journey = read_data(j, source)
 
-        bins = np.arange(0, df['distance'].max(), chunk_length)
-        chunks = []
+        # remove zero speed
+        df_journey = df_journey[np.abs(df_journey['speed']) > 0.05]
+
+        df_journey["Journey"] = j
+        df_journey["Bin"] = 0
+
+        bins = np.arange(0, df_journey['distance'].max(), chunk_length)
 
         for i in range(0, len(bins) - 1):
             # get chunk
-            chunk = df[(df['distance'] < bins[i + 1]) & (df['distance'] >= bins[i])].copy()
-            chunk['Journey'] = j
-            chunk['Bin'] = i
-            chunks.append(chunk)
+            df_journey.loc[((df_journey['distance'] < bins[i + 1]) & (df_journey['distance'] >= bins[i]), "Bin")] = i
 
-    df = pd.concat(chunks)
-    # store
+        data.append(df_journey)
+
+    df = pd.concat(data)
+
     pd.to_pickle(df, file_name)
+
     return df

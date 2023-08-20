@@ -151,6 +151,46 @@ def calc_temporal_features(signal):
 
 
 def extract(signal):
+    # got manual features from https://arxiv.org/pdf/2101.11539.pdf
+
+    features = np.array([])
+
+    # add mean
+    features = np.append(features, np.mean(signal))
+
+    # add root mean square
+    features = np.append(features, np.sqrt(np.mean(np.square(signal))))
+
+    # add 25th percentile
+    features = np.append(features, np.percentile(signal, 25))
+
+    # add 50th percentile
+    features = np.append(features, np.percentile(signal, 50))
+
+    # add 75th percentile
+    features = np.append(features, np.percentile(signal, 75))
+
+    # add max absolute value
+    features = np.append(features, np.max(np.abs(signal)))
+
+    # add standard deviation
+    features = np.append(features, np.std(signal))
+
+    # add peak to peak
+    features = np.append(features, np.abs(np.max(signal) - np.min(signal)))
+
+    # add Skewness
+    features = np.append(features, scipy.stats.skew(signal))
+
+    # add Kurtosis
+    features = np.append(features, scipy.stats.kurtosis(signal))
+
+    # add Entropy
+    features = np.append(features, scipy.stats.entropy(signal))
+
+    return features
+
+def extract_2(signal):
     """This function extracts the features from the signal.
 
     Parameters
