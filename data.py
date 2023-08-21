@@ -2,6 +2,11 @@
 import os
 import sys
 
+from sklearn.preprocessing import StandardScaler
+from sklearn.compose import ColumnTransformer
+
+
+
 # Common Libs (numpy, pandas, ...)
 import numpy as np
 import pandas as pd
@@ -71,36 +76,45 @@ def read_data(jrn, source):
         return df
 
 
-def read_as_chuncked(source, chunk_length=0.3):
-    file_name = f"{source}_{chunk_length}.h5"
-    if os.path.exists(file_name):
-        print(f"Reading from {file_name}")
-        df = pd.read_pickle(file_name)
-        return df
-
-    print(f"Creating {file_name}")
+def create_scaler_for_features(source, features):
     data = []
-    # count_journeys()
-    for j in range(3):
-        print(f"Journey {j}")
+    for j in range(count_journeys()):
         df_journey = read_data(j, source)
-
-        # remove zero speed
-        df_journey = df_journey[np.abs(df_journey['speed']) > 0.05]
-
-        df_journey["Journey"] = j
-        df_journey["Bin"] = 0
-
-        bins = np.arange(0, df_journey['distance'].max(), chunk_length)
-
-        for i in range(0, len(bins) - 1):
-            # get chunk
-            df_journey.loc[((df_journey['distance'] < bins[i + 1]) & (df_journey['distance'] >= bins[i]), "Bin")] = i
-
-        data.append(df_journey)
+        data.append(df_journey[features])
 
     df = pd.concat(data)
 
-    pd.to_pickle(df, file_name)
+    ct = ColumnTransformer([
+        ('feature_columns', StandardScaler(), features)
+    ], remainder='passthrough')
 
-    return df
+    scaler = ct.fit(df[features])
+
+    # test scaler for each dimension
+    scaled = scaler.transform(df[features])
+    for dim in range(len(features)):
+        assert np.allclose(np.mean(scaled[:, dim]), 0)
+        assert np.allclose(np.std(scaled[:, dim]), 1)
+
+    return scaler
+
+
+
+
+def read_as_chuncked(jrn, source, chunk_length=0.3):
+
+    df_journey = read_data(jrn, source)
+
+    # remove zero speed
+    df_journey = df_journey[np.abs(df_journey['speed']) > 0.05]
+
+    df_journey["Journey"] = jrn
+    df_journey["Bin"] = 0
+
+    bins = np.arange(0, df_journey['distance'].max(), chunk_length)
+
+    for i in range(0, len(bins) - 1):
+        # get chunk
+        df_journey.loc[((df_journey['distance'] < bins[i + 1]) & (df_journey['distance'] >= bins[i]), "Bin")] = i
+
+    return df_journey

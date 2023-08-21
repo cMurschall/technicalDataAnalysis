@@ -319,39 +319,36 @@ def use_lstm_autoencoder():
         model.summary()
         return model
 
-    # [samples, timesteps, features]
+
+    source = 'ADC1'
+
+    # features to use
     features = ['speed', 'ch0_local_distance']
+
+    # modelshape => [samples, timesteps, features]
     model = make_model((None, 1, len(features)))
 
-    adc1_data = data.read_as_chuncked(source='ADC1')
-
-    adc1_data["speed"] = np.abs(adc1_data["speed"])
-
-    # adc_2 = data.read_as_chuncks(source='ADC2')
-
-    ct = ColumnTransformer([
-        ('somename', StandardScaler(), features)
-    ], remainder='passthrough')
-
-
-    scaler = ct.fit(adc1_data[features])
+    scaler = data.create_scaler_for_features(source, features)
 
     df_loss = pd.DataFrame(columns=['Journey', 'Bin', 'Loss'])
     df_journey_errors = pd.DataFrame(columns=['Journey', 'MeanAbsoluteError'])
 
 
-    count_journeys = int(adc1_data['Journey'].max())
-    for journey in range(0, count_journeys):
+    count_journeys_test = 2
+    count_journeys = data.count_journeys()
+    for journey in range(count_journeys_test, count_journeys):
+        df_journey = data.read_as_chuncked(journey, source)
+        df_journey["speed"] = np.abs(df_journey["speed"])
 
         # we get all data for this journey
-        df_journey = adc1_data[adc1_data['Journey'] == journey]
-
-        print(f"Training on journey {journey}/{count_journeys}. Distance: {df_journey['distance'].max():.2f} m, Max speed: {df_journey['speed'].max():.2} m/s, Duration: {(df_journey['time'].max() - df_journey['time'].min()).total_seconds() / 60:.1f} min")
+        print(f"Training on journey {journey}/{count_journeys}. Distance: {df_journey['distance'].max():.2f} m, Max "
+              f"speed: {df_journey['speed'].max():.2} m/s, Dura"
+              f"tion: {(df_journey['time'].max() - df_journey['time'].min()).total_seconds() / 60:.1f} min")
         # scale intput data to our
         features_transformed = scaler.transform(df_journey[features])
 
         count_bins = df_journey["Bin"].max()
-        for training_bin in range(10, count_bins):
+        for training_bin in range(count_bins):
 
             # get training data for this bin
             training_data = features_transformed[df_journey['Bin'] == training_bin]
@@ -366,7 +363,7 @@ def use_lstm_autoencoder():
             history = model.fit(generator, epochs=5, verbose=0)
 
             loss = history.history['loss'][-1]
-            if training_bin % 10 == 0:
+            if training_bin % int(count_bins / 10) == 0:
                 print(f"   Trained bin {training_bin}/{count_bins} with sequence size {seq_size}, loss: {loss:.4f}")
 
             new_df = pd.DataFrame([{'Journey': journey, 'Bin': training_bin, 'Loss': loss}])
@@ -377,7 +374,7 @@ def use_lstm_autoencoder():
         journey_data = features_transformed.reshape(-1, 1, 2)
 
         # this might take some time..
-        trainPredict = model.predict(journey_data, verbose=0)
+        trainPredict = model.predict(journey_data, verbose=2)
         train_mean_absolute_error_distance = np.mean(np.abs(trainPredict - journey_data), axis=1)[:, 1]
         df_journey_errors = pd.concat([df_journey_errors, pd.DataFrame([{
             'Journey': journey,
@@ -390,10 +387,6 @@ def use_lstm_autoencoder():
         model.save('model.keras')
 
 
-
-
-
-
 # if main file is executed
 if __name__ == '__main__':
     # print_data_info()
@@ -404,5 +397,4 @@ if __name__ == '__main__':
     # plot_sensors_adc(2)
     # plot_imu_sensors()
     # find_features()
-
     use_lstm_autoencoder()
