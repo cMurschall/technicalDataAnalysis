@@ -1,7 +1,9 @@
 import random
 
+import keras
 import pandas as pd
 import numpy as np
+
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.cm as cm
@@ -21,7 +23,7 @@ from keras.models import Model
 from keras import regularizers
 from keras.models import load_model
 
-
+import tensorflow as tf
 
 import feature_extraction
 
@@ -303,7 +305,7 @@ def find_features():
     plt.show()
 
 
-def use_lstm_autoencoder():
+def train_lstm_autoencoder():
     # inspired by this paper: https://arxiv.org/pdf/2101.11539.pdf
     def make_model(train_data_shape):
         model = Sequential()
@@ -319,72 +321,138 @@ def use_lstm_autoencoder():
         model.summary()
         return model
 
+    with tf.device('/gpu:0'):
+        source = 'ADC1'
+
+        # features to use
+        features = ['speed', 'ch0_local_distance']
+
+        # modelshape => [samples, timesteps, features]
+        model = make_model((None, 1, len(features)))
+
+        scaler = data.create_scaler_for_features(source, features)
+
+        df_loss = pd.DataFrame(columns=['Journey', 'Bin', 'Loss'])
+        df_journey_errors = pd.DataFrame(columns=['Journey', 'MeanAbsoluteError'])
+
+        count_journeys_test = 2
+        count_journeys = data.count_journeys()
+        for journey in range(count_journeys_test, count_journeys):
+            df_journey = data.read_as_chuncked(journey, source)
+            df_journey["speed"] = np.abs(df_journey["speed"])
+
+            # we get all data for this journey
+            print(
+                f"Training on journey {journey}/{count_journeys}. Distance: {df_journey['distance'].max():.2f} m, Max "
+                f"speed: {df_journey['speed'].max():.2} m/s, Dura"
+                f"tion: {(df_journey['time'].max() - df_journey['time'].min()).total_seconds() / 60:.1f} min")
+            # scale intput data to our
+            features_transformed = scaler.transform(df_journey[features])
+
+            count_bins = df_journey["Bin"].max()
+            for training_bin in range(count_bins):
+
+                # get training data for this bin
+                training_data = features_transformed[df_journey['Bin'] == training_bin]
+
+                # we use 1% of the data as sequence size
+                seq_size = int(len(training_data) / 100)  # Number of time steps to look back
+
+                # create generator => this seems to be deprecated, but is just do memory efficient
+                generator = TimeseriesGenerator(training_data, training_data, length=seq_size, batch_size=100)
+
+                # training the model. We use 5 epochs, this is not much, but we have a ton of data, so we don't need more
+                history = model.fit(generator, epochs=5, verbose=0)
+
+                loss = history.history['loss'][-1]
+                if training_bin % int(count_bins / 10) == 0:
+                    print(f"   Trained bin {training_bin}/{count_bins} with sequence size {seq_size}, loss: {loss:.4f}")
+
+                new_df = pd.DataFrame([{'Journey': journey, 'Bin': training_bin, 'Loss': loss}])
+                df_loss = pd.concat([df_loss, new_df], ignore_index=True)
+
+            # lets evaluate the model for this journey
+            journey_data = features_transformed.reshape(-1, 1, 2)
+
+            # this might take some time..
+            trainPredict = model.predict(journey_data, verbose=2)
+            train_mean_absolute_error_distance = np.mean(np.abs(trainPredict - journey_data), axis=1)[:, 1]
+            df_journey_errors = pd.concat([df_journey_errors, pd.DataFrame([{
+                'Journey': journey,
+                'MeanAbsoluteError': [train_mean_absolute_error_distance]
+            }])], ignore_index=True)
+
+            # store our good states
+            pd.to_pickle(df_journey_errors, 'errors.pkl')
+            pd.to_pickle(df_loss, 'loss.pkl')
+            model.save('model.keras')
+
+
+def evaluate_lstm_autoencoder():
+    # load model
+    model = tf.keras.models.load_model("./results/model.keras")
+    errors_df = pd.read_pickle("./results/errors.pkl")
+    loss_df = pd.read_pickle("./results/loss.pkl")
+
+    # we are only interested in the error of the profile reconstruction
+    training_errors = np.concatenate(errors_df["MeanAbsoluteError"][1], axis=None).ravel()
+    max_train_error = np.percentile(training_errors, 99.9)  # Define 99.9 % percentile of max as threshold.
+
+
+    plt.title('Loss Distribution')
+    plt.yscale("log")
+    hist = plt.hist(training_errors, bins=30, density=True, label="reconstruction error", color="#D3D3D3", width=0.7)
+
+    # we limit the hight of the threshold line, so it does not look too aggressive
+    y_ver_max = hist[0][0] * 0.8
+    plt.axvline(x=max_train_error, ymax=y_ver_max, color='r', label="reconstruction threshold")
+    plt.legend()
+    plt.show()
 
     source = 'ADC1'
 
-    # features to use
     features = ['speed', 'ch0_local_distance']
-
-    # modelshape => [samples, timesteps, features]
-    model = make_model((None, 1, len(features)))
-
     scaler = data.create_scaler_for_features(source, features)
 
-    df_loss = pd.DataFrame(columns=['Journey', 'Bin', 'Loss'])
-    df_journey_errors = pd.DataFrame(columns=['Journey', 'MeanAbsoluteError'])
+    count_test_journeys = 3
 
-
-    count_journeys_test = 2
-    count_journeys = data.count_journeys()
-    for journey in range(count_journeys_test, count_journeys):
-        df_journey = data.read_as_chuncked(journey, source)
+    # reset y scale
+    plt.yscale("linear")
+    fig, axs = plt.subplots(count_test_journeys, figsize=(15, 15))
+    for j in range(count_test_journeys):
+        df_journey = data.read_data(j, source)
         df_journey["speed"] = np.abs(df_journey["speed"])
 
-        # we get all data for this journey
-        print(f"Training on journey {journey}/{count_journeys}. Distance: {df_journey['distance'].max():.2f} m, Max "
-              f"speed: {df_journey['speed'].max():.2} m/s, Dura"
-              f"tion: {(df_journey['time'].max() - df_journey['time'].min()).total_seconds() / 60:.1f} min")
-        # scale intput data to our
+        # scale intput data to all our recorded data
         features_transformed = scaler.transform(df_journey[features])
-
-        count_bins = df_journey["Bin"].max()
-        for training_bin in range(count_bins):
-
-            # get training data for this bin
-            training_data = features_transformed[df_journey['Bin'] == training_bin]
-
-            # we use 1% of the data as sequence size
-            seq_size = int(len(training_data) / 100)  # Number of time steps to look back
-
-            # create generator => this seems to be deprecated, but is just do memory efficient
-            generator = TimeseriesGenerator(training_data, training_data, length=seq_size, batch_size=100)
-
-            # training the model. We use 5 epochs, this is not much, but we have a ton of data, so we don't need more
-            history = model.fit(generator, epochs=5, verbose=0)
-
-            loss = history.history['loss'][-1]
-            if training_bin % int(count_bins / 10) == 0:
-                print(f"   Trained bin {training_bin}/{count_bins} with sequence size {seq_size}, loss: {loss:.4f}")
-
-            new_df = pd.DataFrame([{'Journey': journey, 'Bin': training_bin, 'Loss': loss}])
-            df_loss = pd.concat([df_loss, new_df], ignore_index=True)
-
-
         # lets evaluate the model for this journey
         journey_data = features_transformed.reshape(-1, 1, 2)
-
         # this might take some time..
-        trainPredict = model.predict(journey_data, verbose=2)
-        train_mean_absolute_error_distance = np.mean(np.abs(trainPredict - journey_data), axis=1)[:, 1]
-        df_journey_errors = pd.concat([df_journey_errors, pd.DataFrame([{
-            'Journey': journey,
-            'MeanAbsoluteError': [train_mean_absolute_error_distance]
-        }])], ignore_index=True)
+        test_predict = model.predict(journey_data)
 
-        # store our good states
-        pd.to_pickle(df_journey_errors, 'errors.pkl')
-        pd.to_pickle(df_loss, 'loss.pkl')
-        model.save('model.keras')
+        test_error = np.mean(np.abs(test_predict - journey_data), axis=1)
+
+        # again we only look for the errors of the profile reconstruction
+        anomalies = test_error[:, 1] >= max_train_error
+
+        to_mm = 10**7
+        axs[j].set_title(f"Journey {j} - {np.sum(anomalies)} anomalies found")
+        axs[j].scatter(df_journey[anomalies]["distance"], df_journey[anomalies]["ch0"] * to_mm, color="red", s=1)
+        axs[j].plot(df_journey["distance"], df_journey["ch0"] * to_mm, color="#D3D3D3",linewidth=0.2)
+
+
+        # second_y = axs[j].twinx()
+        # second_y.plot(df_journey["distance"], test_error[:, 1], 'g-',linewidth=1)
+        # second_y.set_ylabel('Reconstruction error')
+
+    for ax in axs.flat:
+        ax.set(xlabel='Track distance [m]', ylabel='Profile in [mm]')
+
+        # Hide x labels and tick labels for top plots and y ticks for right plots.
+        # ax.label_outer()
+
+    plt.tight_layout()
+    plt.show()
 
 
 # if main file is executed
@@ -397,4 +465,5 @@ if __name__ == '__main__':
     # plot_sensors_adc(2)
     # plot_imu_sensors()
     # find_features()
-    use_lstm_autoencoder()
+    # train_lstm_autoencoder()
+    evaluate_lstm_autoencoder()
