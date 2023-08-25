@@ -1,6 +1,7 @@
 # Built-in/Generic Imports (os, sys, ...)
 import os
 import sys
+import pickle
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.compose import ColumnTransformer
@@ -66,6 +67,10 @@ def read_data(jrn, source):
         if source in ('ADC1', 'ADC2'):
             # timestamp to datetime
             df['time'] = pd.to_datetime(df['time'], unit='s')
+
+
+            # normalized fourier coeficients
+            df["ch0_fft"] = np.abs(np.fft.fft(df["ch0"]) / len(df["ch0"]))
             # integrate speed
             df["distance"] = (np.abs(df["speed"]) * df['time'].diff().dt.total_seconds()).cumsum().fillna(0)
 
@@ -77,6 +82,13 @@ def read_data(jrn, source):
 
 
 def create_scaler_for_features(source, features):
+    file_name = f"Scaler_{source}_{''.join(features)}.pkl"
+    if os.path.exists(file_name):
+        with open(file_name, 'rb') as f:
+            sc = pickle.load(f)
+            print("Managed to load scaler from disk.")
+            return sc
+
     data = []
     for j in range(count_journeys()):
         df_journey = read_data(j, source)
@@ -95,6 +107,9 @@ def create_scaler_for_features(source, features):
     for dim in range(len(features)):
         assert np.allclose(np.mean(scaled[:, dim]), 0)
         assert np.allclose(np.std(scaled[:, dim]), 1)
+
+    with open(file_name, 'wb') as f:
+        pickle.dump(scaler, f)
 
     return scaler
 

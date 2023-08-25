@@ -1,5 +1,5 @@
-import random
 
+import os
 import keras
 import pandas as pd
 import numpy as np
@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.cm as cm
+import scipy.stats
 import tsfel
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
@@ -305,15 +306,13 @@ def find_features():
     plt.show()
 
 
-def train_lstm_autoencoder():
+def train_lstm_autoencoder(model_version):
     # inspired by this paper: https://arxiv.org/pdf/2101.11539.pdf
-    def make_model(train_data_shape):
-        model = Sequential()
+    def make_model_1(train_data_shape):
+        model = Sequential(name="model_1")
         model.add(LSTM(128, input_shape=(train_data_shape[1], train_data_shape[2])))
         model.add(Dropout(rate=0.2))
-
         model.add(RepeatVector(train_data_shape[1]))
-
         model.add(LSTM(128, return_sequences=True))
         model.add(Dropout(rate=0.2))
         model.add(TimeDistributed(Dense(train_data_shape[2])))
@@ -321,20 +320,69 @@ def train_lstm_autoencoder():
         model.summary()
         return model
 
+    # Try another model
+    def make_model_2(train_data_shape):
+        model = Sequential(name="model_2")
+        model.add(LSTM(16,input_shape=(train_data_shape[1], train_data_shape[2]),
+                       activation='relu',
+                       return_sequences=True,
+                       kernel_regularizer=regularizers.l2(0.02)))
+
+        model.add(LSTM(4, activation='relu', return_sequences=False))
+        model.add(RepeatVector(train_data_shape[1]))
+        model.add(LSTM(4, return_sequences=True))
+        model.add(LSTM(16, return_sequences=True))
+        model.add(TimeDistributed(Dense(train_data_shape[2])))
+        model.compile(optimizer='adam', loss='mae')
+        model.summary()
+        return model
+
+    # Try jet another model
+    def make_model_3(train_data_shape):
+        count_neurons = 8
+        model = Sequential(name="model_3")
+        model.add(LSTM(count_neurons,input_shape=(train_data_shape[1], train_data_shape[2]), return_sequences=True))
+        model.add(LSTM(int(count_neurons / 2),  return_sequences=False))
+        model.add(RepeatVector(train_data_shape[1]))
+        model.add(LSTM(int(count_neurons / 2),return_sequences=True))
+        model.add(LSTM(count_neurons, return_sequences=True))
+        model.add(TimeDistributed(Dense(train_data_shape[2])))
+
+        model.compile(optimizer='adam', loss='mse')
+        model.summary()
+
+
+    def make_model(train_data_shape):
+        model_file_name = f"model_{model_version}.keras"
+        if os.path.exists(model_file_name):
+            m = tf.keras.models.load_model(model_file_name)
+            return m
+
+        if model_version == 1:
+            return make_model_1(train_data_shape)
+        if model_version == 2:
+            return make_model_2(train_data_shape)
+        if model_version == 3:
+            return make_model_3(train_data_shape)
+
+
     with tf.device('/gpu:0'):
         source = 'ADC1'
 
         # features to use
-        features = ['speed', 'ch0_local_distance']
+        features = ['speed', 'ch0_fft']
 
         # modelshape => [samples, timesteps, features]
         model = make_model((None, 1, len(features)))
 
+        print(f"Caluclating Scaler for all journeys for source {source}.")
         scaler = data.create_scaler_for_features(source, features)
+        print("Scaler calculated.")
 
         df_loss = pd.DataFrame(columns=['Journey', 'Bin', 'Loss'])
         df_journey_errors = pd.DataFrame(columns=['Journey', 'MeanAbsoluteError'])
 
+        # we skip those journeys and use them later to test against.
         count_journeys_test = 2
         count_journeys = data.count_journeys()
         for journey in range(count_journeys_test, count_journeys):
@@ -346,7 +394,8 @@ def train_lstm_autoencoder():
                 f"Training on journey {journey}/{count_journeys}. Distance: {df_journey['distance'].max():.2f} m, Max "
                 f"speed: {df_journey['speed'].max():.2} m/s, Dura"
                 f"tion: {(df_journey['time'].max() - df_journey['time'].min()).total_seconds() / 60:.1f} min")
-            # scale intput data to our
+
+            # scale intput data to our current data
             features_transformed = scaler.transform(df_journey[features])
 
             count_bins = df_journey["Bin"].max()
@@ -383,21 +432,21 @@ def train_lstm_autoencoder():
             }])], ignore_index=True)
 
             # store our good states
-            pd.to_pickle(df_journey_errors, 'errors.pkl')
-            pd.to_pickle(df_loss, 'loss.pkl')
-            model.save('model.keras')
+            pd.to_pickle(df_journey_errors, f"errors_{model.name}.pkl")
+            pd.to_pickle(df_loss, f"loss_{model.name}.pkl")
+            model.save(f"{model.name}.keras")
 
 
-def evaluate_lstm_autoencoder():
+def evaluate_lstm_autoencoder(model_version):
+
     # load model
-    model = tf.keras.models.load_model("./results/model.keras")
-    errors_df = pd.read_pickle("./results/errors.pkl")
-    loss_df = pd.read_pickle("./results/loss.pkl")
+    model = tf.keras.models.load_model(f"./results/model_{model_version}/model.keras")
+    errors_df = pd.read_pickle(f"./results/model_{model_version}/errors.pkl")
+    loss_df = pd.read_pickle(f"./results/model_{model_version}/loss.pkl")
 
     # we are only interested in the error of the profile reconstruction
     training_errors = np.concatenate(errors_df["MeanAbsoluteError"][1], axis=None).ravel()
     max_train_error = np.percentile(training_errors, 99.9)  # Define 99.9 % percentile of max as threshold.
-
 
     plt.title('Loss Distribution')
     plt.yscale("log")
@@ -411,7 +460,7 @@ def evaluate_lstm_autoencoder():
 
     source = 'ADC1'
 
-    features = ['speed', 'ch0_local_distance']
+    features = ['speed', 'ch0_fft']
     scaler = data.create_scaler_for_features(source, features)
 
     count_test_journeys = 3
@@ -435,11 +484,10 @@ def evaluate_lstm_autoencoder():
         # again we only look for the errors of the profile reconstruction
         anomalies = test_error[:, 1] >= max_train_error
 
-        to_mm = 10**7
+        to_mm = 10 ** 7
         axs[j].set_title(f"Journey {j} - {np.sum(anomalies)} anomalies found")
         axs[j].scatter(df_journey[anomalies]["distance"], df_journey[anomalies]["ch0"] * to_mm, color="red", s=1)
-        axs[j].plot(df_journey["distance"], df_journey["ch0"] * to_mm, color="#D3D3D3",linewidth=0.2)
-
+        axs[j].plot(df_journey["distance"], df_journey["ch0"] * to_mm, color="#D3D3D3", linewidth=0.2)
 
         # second_y = axs[j].twinx()
         # second_y.plot(df_journey["distance"], test_error[:, 1], 'g-',linewidth=1)
@@ -455,6 +503,60 @@ def evaluate_lstm_autoencoder():
     plt.show()
 
 
+def measure_similarity():
+    adc1_df = data.read_as_chuncked(0, 'ADC1')
+    adc2_df = data.read_as_chuncked(0, 'ADC2')
+
+    adc1_df["Correlation"] = -100.
+    adc2_df["Correlation"] = -100.
+
+    for j in range(int(np.max(adc1_df["Bin"]))):
+
+        time_start = np.min( adc1_df[adc1_df["Bin"] == j]["time"])
+        time_end = np.max( adc1_df[adc1_df["Bin"] == j]["time"])
+
+        bin_adc1 = adc1_df.loc[(adc1_df["time"] > time_start) & (adc1_df["time"] < time_end), "ch0"]
+        bin_adc2 = adc2_df.loc[(adc2_df["time"] > time_start) & (adc2_df["time"] < time_end), "ch0"]
+
+        length = np.min([len(bin_adc1), len(bin_adc2)])
+        corr, _ = scipy.stats.pearsonr(bin_adc1[:length], bin_adc2[:length])
+
+        adc1_df.loc[(adc1_df["time"] > time_start) & (adc1_df["time"] < time_end), "Correlation"] = corr
+        adc2_df.loc[(adc2_df["time"] > time_start) & (adc2_df["time"] < time_end), "Correlation"] = corr
+
+    fig, axs = plt.subplots()
+
+    axs.plot(adc1_df["distance"], adc1_df["ch0"], linewidth=0.2, alpha=0.6)
+    axs.plot(adc2_df["distance"], adc2_df["ch0"], linewidth=0.2, alpha=0.6)
+
+    def align_yaxis(ax1, ax2):
+        """Align zeros of the two axes, zooming them out by same ratio"""
+        axes = (ax1, ax2)
+        extrema = [ax.get_ylim() for ax in axes]
+        tops = [extr[1] / (extr[1] - extr[0]) for extr in extrema]
+        # Ensure that plots (intervals) are ordered bottom to top:
+        if tops[0] > tops[1]:
+            axes, extrema, tops = [list(reversed(l)) for l in (axes, extrema, tops)]
+
+        # How much would the plot overflow if we kept current zoom levels?
+        tot_span = tops[1] + 1 - tops[0]
+
+        b_new_t = extrema[0][0] + tot_span * (extrema[0][1] - extrema[0][0])
+        t_new_b = extrema[1][1] - tot_span * (extrema[1][1] - extrema[1][0])
+        axes[0].set_ylim(extrema[0][0], b_new_t)
+        axes[1].set_ylim(t_new_b, extrema[1][1])
+
+
+
+
+    axs2 = axs.twinx()
+    validcorrelations = adc2_df["Correlation"] > -90
+    axs2.plot(adc2_df[validcorrelations]["distance"], adc2_df[validcorrelations]["Correlation"], c="#D3D3D3",  linewidth=0.4)
+
+    align_yaxis(axs, axs2)
+    plt.show()
+
+
 # if main file is executed
 if __name__ == '__main__':
     # print_data_info()
@@ -465,5 +567,6 @@ if __name__ == '__main__':
     # plot_sensors_adc(2)
     # plot_imu_sensors()
     # find_features()
-    # train_lstm_autoencoder()
-    evaluate_lstm_autoencoder()
+    train_lstm_autoencoder(model_version=3)
+    # evaluate_lstm_autoencoder(2)
+    # measure_similarity()
