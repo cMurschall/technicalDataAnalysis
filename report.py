@@ -459,6 +459,7 @@ def evaluate_lstm_autoencoder(model_version, features=['speed', 'ch0'], percenti
 
     print("Calculate loss of training to determine the threshold for anomalies.")
     for j in loss_df['Journey'].unique():
+
         df = data.read_as_chuncked(j, source)
 
         # transform the features by the same scaler we used for training
@@ -500,9 +501,10 @@ def evaluate_lstm_autoencoder(model_version, features=['speed', 'ch0'], percenti
 
     count_test_journeys = 3
 
-    # reset y scale
-    plt.yscale("linear")
-    fig, axs = plt.subplots(count_test_journeys, figsize=(15, 15))
+
+    _, axs = plt.subplots(count_test_journeys, figsize=(15, 15))
+
+
     for j in range(count_test_journeys):
         df_journey = data.read_data(j, source)
         df_journey["speed"] = np.abs(df_journey["speed"])
@@ -521,15 +523,19 @@ def evaluate_lstm_autoencoder(model_version, features=['speed', 'ch0'], percenti
 
         to_mm = 10 ** 7
         axs[j].set_title(f"Journey {j} - {np.sum(anomalies)} anomalies found")
+
+        # reset scale
+        axs[j].set_yscale("linear")
+
         axs[j].scatter(df_journey[anomalies]["distance"], df_journey[anomalies]["ch0"] * to_mm, color="red", s=1.5)
         axs[j].plot(df_journey["distance"], df_journey["ch0"] * to_mm, color="#D3D3D3", linewidth=0.2)
+
 
     for ax in axs.flat:
         ax.set(xlabel='Track distance [m]', ylabel='Profile in [mm]')
 
-    fig.tight_layout()
-
-    return plt
+    plt.tight_layout()
+    plt.show()
 
 
 ### Helpers
