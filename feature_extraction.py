@@ -186,7 +186,7 @@ def extract(signal):
     features = np.append(features, scipy.stats.kurtosis(signal))
 
     # add Entropy
-    features = np.append(features, scipy.stats.entropy(signal))
+    features = np.append(features, scipy.stats.entropy(np.abs(signal)))
 
     return features
 

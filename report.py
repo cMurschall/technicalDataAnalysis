@@ -161,12 +161,11 @@ def plot_positions():
 
 
 def plot_frequencies_in_bins(sources=['ADC1', 'ADC2'], chunk_length=0.2, chunk_overlap=0):
-
     # make matplotlib color array with data.count_journeys() colors
     colors = cm.rainbow(np.linspace(0, 1, data.count_journeys()))
 
     # make a subplot with 2 rows and 1 column
-    fig, axs = plt.subplots(nrows=1, ncols=len(sources), figsize=(15, 5),  sharey=True)
+    fig, axs = plt.subplots(nrows=1, ncols=len(sources), figsize=(15, 5), sharey=True)
 
     for s, source in enumerate(sources):
         end_count = data.count_journeys()
@@ -201,3 +200,239 @@ def plot_frequencies_in_bins(sources=['ADC1', 'ADC2'], chunk_length=0.2, chunk_o
 
     fig.tight_layout()
     return plt
+
+
+def conduct_pca_on_featues(source='ADC1', count_components=2, feature_lambda=None):
+    # cfg_file = tsfel.get_features_by_domain(json_path='features.json')
+    colors = cm.rainbow(np.linspace(0, 1, data.count_journeys()))
+
+    fig, axes = plt.subplots(nrows=count_components, ncols=count_components)
+
+    for j in trange(0, data.count_journeys(), desc="Journey"):
+        # print(f"Journey {j}")
+        df = data.read_as_chuncked(j, source)
+
+        features = np.empty((0, feature_extraction.get_feature_size()[0]))
+
+        # loop over bins
+        for i in range(0, max(df['Bin'])):
+            # get bins signal
+            signal = df[df['Bin'] == i]['ch0'].values
+
+            if feature_lambda is not None:
+                signal = feature_lambda(signal)
+
+            # signal = np.abs(np.fft.fft(signal))
+
+            f = feature_extraction.extract(signal)
+            features = np.vstack((features, f))
+
+        # scale our data
+        scaler = StandardScaler()
+        features = scaler.fit_transform(features)
+
+        # calculate pca from features
+        pca = PCA(n_components=count_components)
+
+        try:
+
+            features_pca = pca.fit_transform(features)
+            # print pca explained variance in percent
+            # Using set_printoptions
+            np.set_printoptions(suppress=True)
+            print(
+                f"Journey {j + 1} explained variances: {pca.explained_variance_ratio_}, total: {np.sum(pca.explained_variance_ratio_):.2%}")
+
+            for row in range(axes.shape[0]):
+                for col in range(axes.shape[1]):
+                    ax = axes[row, col]
+                    if row == col:
+                        ax.tick_params(
+                            axis='both', which='both',
+                            bottom='off', top='off',
+                            labelbottom='off',
+                            left='off', right='off',
+                            labelleft='off')
+                        ax.text(0.5, 0.5, f"PCA component {col + 1}", horizontalalignment='center')
+                        # remove ticks
+                        ax.set_xticks([])
+                        ax.set_yticks([])
+                    else:
+                        ax.scatter(features_pca[:, row], features_pca[:, col], color=colors[j], s=2, alpha=0.5)
+                        ax.scatter(features_pca[:, row], features_pca[:, col], color=colors[j], s=2, alpha=0.5)
+                        ax.scatter(features_pca[:, row], features_pca[:, col], color=colors[j], s=2, alpha=0.5)
+
+            # plot pca
+            # for c in range(1, count_components):
+            #    plt.scatter(features_pca[:, 0], features_pca[:, c], color=colors[j], s=2, alpha=0.5)
+
+            # plt.xlabel('PCA 0')
+            # plt.ylabel(f"PCA 1-{count_components}")
+
+            # plt.scatter(features_pca[:, 0], features_pca[:, 1], color=colors[j], s=2, alpha=0.3)
+            # plt.scatter(features_pca[:, 0], features_pca[:, 2], color=colors[j], s=2, alpha=0.3)
+            # plt.scatter(features_pca[:, 0], features_pca[:, 3], color='blue', s=2, alpha=0.3)
+            # plt.scatter(features_pca[:, 0], features_pca[:, 4], color='yellow', s=2, alpha=0.3)
+        except Exception as e:
+            print(e)
+
+    fig.tight_layout()
+    return plt
+
+
+def train_lstm_autoencoder(model_version, features=['speed', 'ch0_fft']):
+    """
+    Train a LSTM autoencoder model.
+    inspired by this paper: https://arxiv.org/pdf/2101.11539.pdf
+    Parameters
+    ----------
+    model_version : int
+    features : list
+
+    Returns
+    -------
+
+    """
+
+    def make_model_1(train_data_shape):
+        model = Sequential(name="model_1")
+        model.add(LSTM(128, input_shape=(train_data_shape[1], train_data_shape[2])))
+        model.add(Dropout(rate=0.2))
+        model.add(RepeatVector(train_data_shape[1]))
+        model.add(LSTM(128, return_sequences=True))
+        model.add(Dropout(rate=0.2))
+        model.add(TimeDistributed(Dense(train_data_shape[2])))
+        model.compile(optimizer='adam', loss='mae')
+        model.summary()
+        return model
+
+    # Try another model
+    def make_model_2(train_data_shape):
+        model = Sequential(name="model_2")
+        model.add(LSTM(16, input_shape=(train_data_shape[1], train_data_shape[2]),
+                       activation='relu',
+                       return_sequences=True,
+                       kernel_regularizer=regularizers.l2(0.02)))
+
+        model.add(LSTM(4, activation='relu', return_sequences=False))
+        model.add(RepeatVector(train_data_shape[1]))
+        model.add(LSTM(4, return_sequences=True))
+        model.add(LSTM(16, return_sequences=True))
+        model.add(TimeDistributed(Dense(train_data_shape[2])))
+        model.compile(optimizer='adam', loss='mae')
+        model.summary()
+        return model
+
+    # Try jet another model
+    def make_model_3(train_data_shape):
+        count_neurons = 8
+        model = Sequential(name="model_3")
+        model.add(LSTM(count_neurons, input_shape=(train_data_shape[1], train_data_shape[2]), return_sequences=True))
+        model.add(LSTM(int(count_neurons / 2), return_sequences=False))
+        model.add(RepeatVector(train_data_shape[1]))
+        model.add(LSTM(int(count_neurons / 2), return_sequences=True))
+        model.add(LSTM(count_neurons, return_sequences=True))
+        model.add(TimeDistributed(Dense(train_data_shape[2])))
+
+        model.compile(optimizer='adam', loss='mse')
+        model.summary()
+        return model
+
+    def make_model(train_data_shape):
+        model_file_name = f"model_{model_version}.keras"
+        if os.path.exists(model_file_name):
+            m = tf.keras.models.load_model(model_file_name)
+            return m
+
+        if model_version == 1:
+            return make_model_1(train_data_shape)
+        if model_version == 2:
+            return make_model_2(train_data_shape)
+        if model_version == 3:
+            return make_model_3(train_data_shape)
+
+    with tf.device('/gpu:0'):
+        source = 'ADC1'
+
+        # modelshape => [samples, timesteps, features]
+        model = make_model((None, 1, len(features)))
+
+        print(f"Caluclating Scaler for all journeys for source {source}.")
+        scaler = data.create_scaler_for_features(source, features)
+        print("Scaler calculated.")
+
+        df_loss = pd.DataFrame(columns=['Journey', 'Bin', 'Loss'])
+        df_journey_errors = pd.DataFrame(columns=['Journey', 'MeanAbsoluteError'])
+
+        # we skip those journeys and use them later to test against.
+        count_journeys_test = 2
+        count_journeys = data.count_journeys()
+        for journey in range(count_journeys_test, count_journeys):
+            df_journey = data.read_as_chuncked(journey, source)
+            df_journey["speed"] = np.abs(df_journey["speed"])
+
+            # we get all data for this journey
+            print(
+                f"Training on journey {journey}/{count_journeys}. Distance: {df_journey['distance'].max():.2f} m, Max "
+                f"speed: {df_journey['speed'].max():.2} m/s, Dura"
+                f"tion: {(df_journey['time'].max() - df_journey['time'].min()).total_seconds() / 60:.1f} min")
+
+            # scale intput data to our current data
+            features_transformed = scaler.transform(df_journey[features])
+
+            count_bins = df_journey["Bin"].max()
+            for training_bin in range(count_bins):
+
+                # get training data for this bin
+                training_data = features_transformed[df_journey['Bin'] == training_bin]
+
+                # we use 1% of the data as sequence size
+                seq_size = int(len(training_data) / 100)  # Number of time steps to look back
+
+                # create generator => this seems to be deprecated, but is just do memory efficient
+                generator = TimeseriesGenerator(training_data, training_data, length=seq_size, batch_size=100)
+
+                # training the model. We use 5 epochs, this is not much, but we have a ton of data, so we don't need more
+                history = model.fit(generator, epochs=5, verbose=0)
+
+                loss = history.history['loss'][-1]
+                if training_bin % int(count_bins / 5) == 0:
+                    print(f"   Trained bin {training_bin}/{count_bins} with sequence size {seq_size}, loss: {loss:.4f}")
+
+                new_df = pd.DataFrame([{'Journey': journey, 'Bin': training_bin, 'Loss': loss}])
+                df_loss = pd.concat([df_loss, new_df], ignore_index=True)
+
+            # lets evaluate the model for this journey
+            journey_data = features_transformed.reshape(-1, 1, 2)
+
+            # this might take some time..
+            trainPredict = model.predict(journey_data, verbose=2)
+            train_mean_absolute_error_distance = np.mean(np.abs(trainPredict - journey_data), axis=1)[:, 1]
+            df_journey_errors = pd.concat([df_journey_errors, pd.DataFrame([{
+                'Journey': journey,
+                'MeanAbsoluteError': [train_mean_absolute_error_distance]
+            }])], ignore_index=True)
+
+            # store our good states
+            pd.to_pickle(df_journey_errors, f"errors_{model.name}.pkl")
+            pd.to_pickle(df_loss, f"loss_{model.name}.pkl")
+            model.save(f"{model.name}.keras")
+
+
+### Helpers
+def align_yaxis(ax1, ax2):
+    """Align zeros of the two axes, zooming them out by same ratio"""
+    axes = (ax1, ax2)
+    extrema = [ax.get_ylim() for ax in axes]
+    tops = [extr[1] / (extr[1] - extr[0]) for extr in extrema]
+    # Ensure that plots (intervals) are ordered bottom to top:
+    if tops[0] > tops[1]:
+        axes, extrema, tops = [list(reversed(l)) for l in (axes, extrema, tops)]
+
+    # How much would the plot overflow if we kept current zoom levels?
+    tot_span = tops[1] + 1 - tops[0]
+
+    b_new_t = extrema[0][0] + tot_span * (extrema[0][1] - extrema[0][0])
+    t_new_b = extrema[1][1] - tot_span * (extrema[1][1] - extrema[1][0])
+    axes[0].set_ylim(extrema[0][0], b_new_t)
+    axes[1].set_ylim(t_new_b, extrema[1][1])

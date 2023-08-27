@@ -25,7 +25,7 @@ from keras.models import load_model
 import feature_extraction
 
 import data
-
+import report
 
 # plt.rcParams.update({'font.size': 30})
 
@@ -447,11 +447,12 @@ def evaluate_lstm_autoencoder(model_version):
     errors_df = pd.read_pickle(f"./results/model_{model_version}/errors.pkl")
     loss_df = pd.read_pickle(f"./results/model_{model_version}/loss.pkl")
 
+    print(f"Trained journeys: {loss_df['Journey'].unique()}")
     # we are only interested in the error of the profile reconstruction
     training_errors = np.concatenate(errors_df["MeanAbsoluteError"][1], axis=None).ravel()
     max_train_error = np.percentile(training_errors, 95)  # Define 99.9 % percentile of max as threshold.
 
-    plt.title('Loss Distribution')
+    plt.title('Error Distribution')
     # plt.yscale("log")
     hist = plt.hist(training_errors, bins=30, density=True, label="reconstruction error", color="#D3D3D3", width=0.7)
 
@@ -599,5 +600,7 @@ if __name__ == '__main__':
     # plot_imu_sensors()
     # find_features()
     # train_lstm_autoencoder(model_version=3)
-    # evaluate_lstm_autoencoder(3)
-    measure_similarity()
+    evaluate_lstm_autoencoder(1)
+    # measure_similarity()
+
+    # report.conduct_pca_on_featues(source='ADC1', count_components=3, feature_lambda=lambda x: np.abs(np.fft.fft(x)))
