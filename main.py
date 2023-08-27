@@ -1,6 +1,5 @@
-
 import os
-import keras
+
 import pandas as pd
 import numpy as np
 
@@ -8,12 +7,11 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.cm as cm
 import scipy.stats
-import tsfel
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
-from sklearn.compose import ColumnTransformer
-from sklearn.model_selection import train_test_split
 
+
+import tensorflow as tf
 from keras.models import Sequential
 from keras.layers import LSTM, Input, Dropout
 from keras.layers import Dense
@@ -23,8 +21,6 @@ from keras.preprocessing.sequence import TimeseriesGenerator
 from keras.models import Model
 from keras import regularizers
 from keras.models import load_model
-
-import tensorflow as tf
 
 import feature_extraction
 
@@ -224,40 +220,40 @@ def cut_into_chunks():
     plt.show()
 
 
-def cut_into_feature_chunks():
-    # make matplotlib color array with data.count_journeys() colors
-    colors = cm.rainbow(np.linspace(0, 1, data.count_journeys()))
-    cfg_file = tsfel.get_features_by_domain(domain='temporal')
+# def cut_into_feature_chunks():
+#    # make matplotlib color array with data.count_journeys() colors
+#    colors = cm.rainbow(np.linspace(0, 1, data.count_journeys()))
+#    cfg_file = tsfel.get_features_by_domain(domain='temporal')
 
-    for j in range(0, data.count_journeys()):
-        print(f"Journey {j}")
-        df = data.read_data(j, 'ADC1')
+#    for j in range(0, data.count_journeys()):
+#        print(f"Journey {j}")
+#        df = data.read_data(j, 'ADC1')
 
-        # timestamp to datetimeq
-        df['time'] = pd.to_datetime(df['time'], unit='s')
+#        # timestamp to datetimeq
+#        df['time'] = pd.to_datetime(df['time'], unit='s')
 
-        # integrage speed
-        df["distance"] = (np.abs(df["speed"]) * df['time'].diff().dt.total_seconds()).cumsum().fillna(0)
+#        # integrage speed
+#        df["distance"] = (np.abs(df["speed"]) * df['time'].diff().dt.total_seconds()).cumsum().fillna(0)
 
-        # cut into chunks
-        chunk_length = 0.1
-        chunk_overlap = 0.05
+#        # cut into chunks
+#        chunk_length = 0.1
+#        chunk_overlap = 0.05
 
-        bins = np.arange(0, df['distance'].max(), chunk_length)
-        chunks = []
+#        bins = np.arange(0, df['distance'].max(), chunk_length)
+#        chunks = []
 
-        # prepare 3d plot
-        # loop over bins
-        for i in range(0, len(bins) - 1):
-            # get chunk
-            chunk = df[(df['distance'] < bins[i + 1]) & (df['distance'] >= bins[i])].copy()
+#        # prepare 3d plot
+#        # loop over bins
+#        for i in range(0, len(bins) - 1):
+#            # get chunk
+#            chunk = df[(df['distance'] < bins[i + 1]) & (df['distance'] >= bins[i])].copy()
 
-            features = tsfel.time_series_features_extractor(cfg_file, chunk['ch0'], window_size=1, fs=20625, verbose=0)
-            print(features.size)
+#            features = tsfel.time_series_features_extractor(cfg_file, chunk['ch0'], window_size=1, fs=20625, verbose=0)
+#            print(features.size)
 
 
 def find_features():
-    cfg_file = tsfel.get_features_by_domain(json_path='features.json')
+    # cfg_file = tsfel.get_features_by_domain(json_path='features.json')
     colors = cm.rainbow(np.linspace(0, 1, data.count_journeys()))
 
     for j in range(0, data.count_journeys()):
@@ -306,8 +302,20 @@ def find_features():
     plt.show()
 
 
-def train_lstm_autoencoder(model_version):
-    # inspired by this paper: https://arxiv.org/pdf/2101.11539.pdf
+def train_lstm_autoencoder(model_version, features=['speed', 'ch0_fft']):
+    """
+    Train a LSTM autoencoder model.
+    inspired by this paper: https://arxiv.org/pdf/2101.11539.pdf
+    Parameters
+    ----------
+    model_version : int
+    features : list
+
+    Returns
+    -------
+
+    """
+
     def make_model_1(train_data_shape):
         model = Sequential(name="model_1")
         model.add(LSTM(128, input_shape=(train_data_shape[1], train_data_shape[2])))
@@ -323,7 +331,7 @@ def train_lstm_autoencoder(model_version):
     # Try another model
     def make_model_2(train_data_shape):
         model = Sequential(name="model_2")
-        model.add(LSTM(16,input_shape=(train_data_shape[1], train_data_shape[2]),
+        model.add(LSTM(16, input_shape=(train_data_shape[1], train_data_shape[2]),
                        activation='relu',
                        return_sequences=True,
                        kernel_regularizer=regularizers.l2(0.02)))
@@ -341,16 +349,16 @@ def train_lstm_autoencoder(model_version):
     def make_model_3(train_data_shape):
         count_neurons = 8
         model = Sequential(name="model_3")
-        model.add(LSTM(count_neurons,input_shape=(train_data_shape[1], train_data_shape[2]), return_sequences=True))
-        model.add(LSTM(int(count_neurons / 2),  return_sequences=False))
+        model.add(LSTM(count_neurons, input_shape=(train_data_shape[1], train_data_shape[2]), return_sequences=True))
+        model.add(LSTM(int(count_neurons / 2), return_sequences=False))
         model.add(RepeatVector(train_data_shape[1]))
-        model.add(LSTM(int(count_neurons / 2),return_sequences=True))
+        model.add(LSTM(int(count_neurons / 2), return_sequences=True))
         model.add(LSTM(count_neurons, return_sequences=True))
         model.add(TimeDistributed(Dense(train_data_shape[2])))
 
         model.compile(optimizer='adam', loss='mse')
         model.summary()
-
+        return model
 
     def make_model(train_data_shape):
         model_file_name = f"model_{model_version}.keras"
@@ -365,12 +373,8 @@ def train_lstm_autoencoder(model_version):
         if model_version == 3:
             return make_model_3(train_data_shape)
 
-
     with tf.device('/gpu:0'):
         source = 'ADC1'
-
-        # features to use
-        features = ['speed', 'ch0_fft']
 
         # modelshape => [samples, timesteps, features]
         model = make_model((None, 1, len(features)))
@@ -414,7 +418,7 @@ def train_lstm_autoencoder(model_version):
                 history = model.fit(generator, epochs=5, verbose=0)
 
                 loss = history.history['loss'][-1]
-                if training_bin % int(count_bins / 10) == 0:
+                if training_bin % int(count_bins / 5) == 0:
                     print(f"   Trained bin {training_bin}/{count_bins} with sequence size {seq_size}, loss: {loss:.4f}")
 
                 new_df = pd.DataFrame([{'Journey': journey, 'Bin': training_bin, 'Loss': loss}])
@@ -438,7 +442,6 @@ def train_lstm_autoencoder(model_version):
 
 
 def evaluate_lstm_autoencoder(model_version):
-
     # load model
     model = tf.keras.models.load_model(f"./results/model_{model_version}/model.keras")
     errors_df = pd.read_pickle(f"./results/model_{model_version}/errors.pkl")
@@ -446,10 +449,10 @@ def evaluate_lstm_autoencoder(model_version):
 
     # we are only interested in the error of the profile reconstruction
     training_errors = np.concatenate(errors_df["MeanAbsoluteError"][1], axis=None).ravel()
-    max_train_error = np.percentile(training_errors, 99.9)  # Define 99.9 % percentile of max as threshold.
+    max_train_error = np.percentile(training_errors, 95)  # Define 99.9 % percentile of max as threshold.
 
     plt.title('Loss Distribution')
-    plt.yscale("log")
+    # plt.yscale("log")
     hist = plt.hist(training_errors, bins=30, density=True, label="reconstruction error", color="#D3D3D3", width=0.7)
 
     # we limit the hight of the threshold line, so it does not look too aggressive
@@ -486,7 +489,7 @@ def evaluate_lstm_autoencoder(model_version):
 
         to_mm = 10 ** 7
         axs[j].set_title(f"Journey {j} - {np.sum(anomalies)} anomalies found")
-        axs[j].scatter(df_journey[anomalies]["distance"], df_journey[anomalies]["ch0"] * to_mm, color="red", s=1)
+        axs[j].scatter(df_journey[anomalies]["distance"], df_journey[anomalies]["ch0"] * to_mm, color="red", s=1.5)
         axs[j].plot(df_journey["distance"], df_journey["ch0"] * to_mm, color="#D3D3D3", linewidth=0.2)
 
         # second_y = axs[j].twinx()
@@ -504,30 +507,45 @@ def evaluate_lstm_autoencoder(model_version):
 
 
 def measure_similarity():
+    import tslearn.metrics
+
     adc1_df = data.read_as_chuncked(0, 'ADC1')
     adc2_df = data.read_as_chuncked(0, 'ADC2')
 
-    adc1_df["Correlation"] = -100.
-    adc2_df["Correlation"] = -100.
+    adc1_df["Correlation"] = np.nan
+    adc2_df["Correlation"] = np.nan
+
+    adc1_df["DTWDistance"] = np.nan
+    adc2_df["DTWDistance"] = np.nan
 
     for j in range(int(np.max(adc1_df["Bin"]))):
+        try:
+            time_start = np.min(adc1_df[adc1_df["Bin"] == j]["time"])
+            time_end = np.max(adc1_df[adc1_df["Bin"] == j]["time"])
 
-        time_start = np.min( adc1_df[adc1_df["Bin"] == j]["time"])
-        time_end = np.max( adc1_df[adc1_df["Bin"] == j]["time"])
+            bin_adc1 = adc1_df.loc[(adc1_df["time"] > time_start) & (adc1_df["time"] < time_end), "ch0"]
+            bin_adc2 = adc2_df.loc[(adc2_df["time"] > time_start) & (adc2_df["time"] < time_end), "ch0"]
 
-        bin_adc1 = adc1_df.loc[(adc1_df["time"] > time_start) & (adc1_df["time"] < time_end), "ch0"]
-        bin_adc2 = adc2_df.loc[(adc2_df["time"] > time_start) & (adc2_df["time"] < time_end), "ch0"]
+            length = np.min([len(bin_adc1), len(bin_adc2)])
+            corr, _ = scipy.stats.pearsonr(bin_adc1[:length], bin_adc2[:length])
 
-        length = np.min([len(bin_adc1), len(bin_adc2)])
-        corr, _ = scipy.stats.pearsonr(bin_adc1[:length], bin_adc2[:length])
+            dwt_distance = tslearn.metrics.dtw(bin_adc1[:length], bin_adc2[:length])
+            print(f"Bin {j} - Correlation: {corr:.2f}, DTW: {dwt_distance:.2f}")
 
-        adc1_df.loc[(adc1_df["time"] > time_start) & (adc1_df["time"] < time_end), "Correlation"] = corr
-        adc2_df.loc[(adc2_df["time"] > time_start) & (adc2_df["time"] < time_end), "Correlation"] = corr
 
+            adc1_df.loc[(adc1_df["time"] > time_start) & (adc1_df["time"] < time_end), "Correlation"] = corr
+            adc2_df.loc[(adc2_df["time"] > time_start) & (adc2_df["time"] < time_end), "Correlation"] = corr
+
+            adc1_df.loc[(adc1_df["time"] > time_start) & (adc1_df["time"] < time_end), "DTWDistance"] = dwt_distance
+            adc2_df.loc[(adc2_df["time"] > time_start) & (adc2_df["time"] < time_end), "DTWDistance"] = dwt_distance
+
+        except:
+            pass
+
+    max_train_error = np.nanpercentile (adc1_df["DTWDistance"], 95)  # Define 99.9 % percentile of max as threshold.
     fig, axs = plt.subplots()
 
-    axs.plot(adc1_df["distance"], adc1_df["ch0"], linewidth=0.2, alpha=0.6)
-    axs.plot(adc2_df["distance"], adc2_df["ch0"], linewidth=0.2, alpha=0.6)
+
 
     def align_yaxis(ax1, ax2):
         """Align zeros of the two axes, zooming them out by same ratio"""
@@ -546,14 +564,27 @@ def measure_similarity():
         axes[0].set_ylim(extrema[0][0], b_new_t)
         axes[1].set_ylim(t_new_b, extrema[1][1])
 
-
-
-
-    axs2 = axs.twinx()
+    #axs2 = axs.twinx()
     validcorrelations = adc2_df["Correlation"] > -90
-    axs2.plot(adc2_df[validcorrelations]["distance"], adc2_df[validcorrelations]["Correlation"], c="#D3D3D3",  linewidth=0.4)
+    #axs2.plot(adc2_df[validcorrelations]["distance"], adc2_df[validcorrelations]["Correlation"], c="#D3D3D3",linewidth=0.4)
 
-    align_yaxis(axs, axs2)
+    adc1_df_anomalies = adc1_df["DTWDistance"] >= np.nanpercentile(adc1_df["DTWDistance"], 95)
+    adc2_df_anomalies = adc2_df["DTWDistance"] >= np.nanpercentile(adc2_df["DTWDistance"], 95)
+
+
+    #axs.plot(adc1_df["distance"], adc1_df["ch0"], linewidth=0.2, alpha=0.6)
+
+    axs.scatter(adc1_df[adc1_df_anomalies]["distance"], adc1_df[adc1_df_anomalies]["ch0"], color="red", s=1.5)
+    axs.plot(adc1_df["distance"], adc1_df["ch0"], linewidth=0.2, alpha=0.6)
+
+
+
+    #axs.plot(adc2_df[adc2_df_anomalies]["distance"], adc2_df[adc2_df_anomalies]["ch0"], linewidth=2, c='red')
+
+    # axs.plot(adc2_df["distance"], adc2_df["DTWDistance"], c="#D3D3D3",linewidth=2)
+
+
+    # align_yaxis(axs, axs2)
     plt.show()
 
 
@@ -567,6 +598,6 @@ if __name__ == '__main__':
     # plot_sensors_adc(2)
     # plot_imu_sensors()
     # find_features()
-    train_lstm_autoencoder(model_version=3)
-    # evaluate_lstm_autoencoder(2)
-    # measure_similarity()
+    # train_lstm_autoencoder(model_version=3)
+    # evaluate_lstm_autoencoder(3)
+    measure_similarity()
