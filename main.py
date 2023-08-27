@@ -441,13 +441,13 @@ def train_lstm_autoencoder(model_version, features=['speed', 'ch0_fft']):
             model.save(f"{model.name}.keras")
 
 
-def evaluate_lstm_autoencoder(model_version):
+def evaluate_lstm_autoencoder(model_version, features = ['speed', 'ch0_fft']):
     # load model
     model = tf.keras.models.load_model(f"./results/model_{model_version}/model.keras")
     errors_df = pd.read_pickle(f"./results/model_{model_version}/errors.pkl")
     loss_df = pd.read_pickle(f"./results/model_{model_version}/loss.pkl")
 
-    print(f"Trained journeys: {loss_df['Journey'].unique()}")
+
     # we are only interested in the error of the profile reconstruction
     training_errors = np.concatenate(errors_df["MeanAbsoluteError"][1], axis=None).ravel()
     max_train_error = np.percentile(training_errors, 95)  # Define 99.9 % percentile of max as threshold.
@@ -464,7 +464,7 @@ def evaluate_lstm_autoencoder(model_version):
 
     source = 'ADC1'
 
-    features = ['speed', 'ch0_fft']
+
     scaler = data.create_scaler_for_features(source, features)
 
     count_test_journeys = 3

@@ -6,8 +6,6 @@ import pickle
 from sklearn.preprocessing import StandardScaler
 from sklearn.compose import ColumnTransformer
 
-
-
 # Common Libs (numpy, pandas, ...)
 import numpy as np
 import pandas as pd
@@ -68,7 +66,6 @@ def read_data(jrn, source):
             # timestamp to datetime
             df['time'] = pd.to_datetime(df['time'], unit='s')
 
-
             # normalized fourier coeficients
             df["ch0_fft"] = np.abs(np.fft.fft(df["ch0"]) / len(df["ch0"]))
             # integrate speed
@@ -77,12 +74,30 @@ def read_data(jrn, source):
             # integrate speed
             df["ch0_local_velocity"] = (np.abs(df["ch0"]) * df['time'].diff().dt.total_seconds()).fillna(0)
             # integrate distance
-            df["ch0_local_distance"] = (np.abs(df["ch0_local_velocity"]) * df['time'].diff().dt.total_seconds()).fillna(0)
+            df["ch0_local_distance"] = (np.abs(df["ch0_local_velocity"]) * df['time'].diff().dt.total_seconds()).fillna(
+                0)
         return df
 
 
 def create_scaler_for_features(source, features):
+    """
+    Create a standard scaler for all journey data for the given features.
+    Parameters
+    ----------
+    source : str
+        Data source whose data should be read. Either AD converter name of axle-
+        box acceleration sensor ('ADC1', 'ADC2') or 'IMU'.
+    features : list
+        List of features to be scaled.
+
+    Returns scaler
+    -------
+
+    """
+
     file_name = f"Scaler_{source}_{''.join(features)}.pkl"
+
+    # check if scaler already exists
     if os.path.exists(file_name):
         with open(file_name, 'rb') as f:
             sc = pickle.load(f)
@@ -96,10 +111,12 @@ def create_scaler_for_features(source, features):
 
     df = pd.concat(data)
 
+    # we have multiple feature columns, so we need to scale them separately by using a ColumnTransformer
     ct = ColumnTransformer([
         ('feature_columns', StandardScaler(), features)
     ], remainder='passthrough')
 
+    # fit scaler
     scaler = ct.fit(df[features])
 
     # test scaler for each dimension
@@ -108,28 +125,44 @@ def create_scaler_for_features(source, features):
         assert np.allclose(np.mean(scaled[:, dim]), 0)
         assert np.allclose(np.std(scaled[:, dim]), 1)
 
+    # save scaler
     with open(file_name, 'wb') as f:
         pickle.dump(scaler, f)
 
     return scaler
 
 
+def read_as_chuncked(jrn, source, bin_length=0.3):
+    """
+    Read data as chuncked data. Each chunck is a bin of the given length.
+    Parameters
+    ----------
+    jrn : int
+        Journey number.
+    source : str
+        Data source whose data should be read. Either AD converter name of axle-
+        box acceleration sensor ('ADC1', 'ADC2') or 'IMU'.
+    bin_length : float
+        Length of each bin in meters.
 
-
-def read_as_chuncked(jrn, source, chunk_length=0.3):
+    Returns
+    -------
+    """
 
     df_journey = read_data(jrn, source)
 
-    # remove zero speed
+    # data where the locomotive is not moving
     df_journey = df_journey[np.abs(df_journey['speed']) > 0.05]
 
+    # add journey and bin
     df_journey["Journey"] = jrn
     df_journey["Bin"] = 0
 
-    bins = np.arange(0, df_journey['distance'].max(), chunk_length)
+    # create bins
+    bins = np.arange(0, df_journey['distance'].max(), bin_length)
 
     for i in range(0, len(bins) - 1):
-        # get chunk
+        # set bin
         df_journey.loc[((df_journey['distance'] < bins[i + 1]) & (df_journey['distance'] >= bins[i]), "Bin")] = i
 
     return df_journey

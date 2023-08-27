@@ -419,6 +419,119 @@ def train_lstm_autoencoder(model_version, features=['speed', 'ch0_fft']):
             model.save(f"{model.name}.keras")
 
 
+def evaluate_lstm_autoencoder(model_version, features=['speed', 'ch0'], percentil_threshold=95):
+    source = 'ADC1'
+
+    # load model
+    model = tf.keras.models.load_model(f"./results/model_{model_version}/model.keras")
+
+    # print model summary
+    print("Model summary:")
+    model.summary()
+    # errors_df = pd.read_pickle(f"./results/model_{model_version}/errors.pkl")
+    loss_df = pd.read_pickle(f"./results/model_{model_version}/loss.pkl")
+
+    fig, axs = plt.subplots()
+    axs.plot(loss_df["Loss"], 'r-', label="Loss", linewidth=0.5, alpha=0.5)
+
+    print("Plot training loss")
+    for j in loss_df['Journey'].unique():
+        rect_x = loss_df[loss_df['Journey'] == j].index[0]
+        rect_y = loss_df[loss_df['Journey'] == j].index[-1]
+        axs.axvspan(rect_x, rect_y, facecolor='gray', edgecolor="black", alpha=0.1, linewidth=1)
+
+        # write centered text
+        text_x = loss_df[loss_df['Journey'] == j].index[0] + (
+                loss_df[loss_df['Journey'] == j].index[-1] - loss_df[loss_df['Journey'] == j].index[0]) / 2
+        text_y = np.max(loss_df["Loss"]) * 0.8
+        axs.text(text_x, text_y, f"Journey {j + 1}", verticalalignment='top', horizontalalignment='center', fontsize=8,
+                 rotation=45)
+
+    axs.set_xlabel("Trained Bin")
+    axs.set_ylabel("Training Loss")
+
+    fig.suptitle(f"Training Loss of Model {model_version}")
+
+    plt.show()
+
+    scaler = data.create_scaler_for_features(source, features)
+    errors = []
+
+    print("Calculate loss of training to determine the threshold for anomalies.")
+    for j in loss_df['Journey'].unique():
+        df = data.read_as_chuncked(j, source)
+
+        # transform the features by the same scaler we used for training
+        df_transformed = scaler.transform(df[features]).reshape(-1, 1, 2)
+
+        # we predict the reconstruction
+        prediction = model.predict(df_transformed)
+
+        # we calculate reconstruction error (mean absolute error)
+        mean_absolute_error = np.mean(np.abs(prediction - df_transformed), axis=1)[:, 1]
+
+        print(mean_absolute_error.shape)
+        errors.append(mean_absolute_error)
+
+    # we flatten the list of errors
+    training_errors = np.concatenate(errors)
+
+    # we use the giben percentile as threshold
+    max_train_error = np.percentile(training_errors, percentil_threshold)
+
+
+    # plot error distribution
+    plt.title('Error Distribution')
+    plt.yscale("log")
+
+    hist = plt.hist(training_errors, bins=30, density=True, label="reconstruction error", color="#D3D3D3", width=0.7)
+
+    # we limit the hight of the threshold line, so it does not look too aggressive
+    y_ver_max = hist[0][0] * 0.8
+    plt.axvline(x=max_train_error, ymax=y_ver_max, color='r', label="reconstruction threshold")
+
+    plt.ylabel("Mean Absolute Error (log)")
+    plt.xlabel("Reconstruction Error")
+
+    plt.legend()
+    plt.show()
+
+    scaler = data.create_scaler_for_features(source, features)
+
+    count_test_journeys = 3
+
+    # reset y scale
+    plt.yscale("linear")
+    fig, axs = plt.subplots(count_test_journeys, figsize=(15, 15))
+    for j in range(count_test_journeys):
+        df_journey = data.read_data(j, source)
+        df_journey["speed"] = np.abs(df_journey["speed"])
+
+        # scale intput data to all our recorded data
+        features_transformed = scaler.transform(df_journey[features])
+        # lets evaluate the model for this journey
+        journey_data = features_transformed.reshape(-1, 1, 2)
+        # this might take some time..
+        test_predict = model.predict(journey_data)
+
+        test_error = np.mean(np.abs(test_predict - journey_data), axis=1)
+
+        # again we only look for the errors of the profile reconstruction
+        anomalies = test_error[:, 1] >= max_train_error
+
+        to_mm = 10 ** 7
+        axs[j].set_title(f"Journey {j} - {np.sum(anomalies)} anomalies found")
+        axs[j].scatter(df_journey[anomalies]["distance"], df_journey[anomalies]["ch0"] * to_mm, color="red", s=1.5)
+        axs[j].plot(df_journey["distance"], df_journey["ch0"] * to_mm, color="#D3D3D3", linewidth=0.2)
+
+    for ax in axs.flat:
+        ax.set(xlabel='Track distance [m]', ylabel='Profile in [mm]')
+
+    fig.tight_layout()
+
+    return plt
+
+
 ### Helpers
 def align_yaxis(ax1, ax2):
     """Align zeros of the two axes, zooming them out by same ratio"""
