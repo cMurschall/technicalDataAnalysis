@@ -27,10 +27,15 @@ import feature_extraction
 
 import data
 
+color_loss = 'cornflowerblue'
+color_anomaly = 'crimson'
+color_sensor = 'black'
+color_error = "#D3D3D3"
+alpha_sonsor = 0.4
 
 def plot_imu_sensors():
     line_with = 0.6
-    # make a subplot with 5 rows and 1 column
+    # make a subplot with 6 rows and 1 column
     fig, axs = plt.subplots(6, 1, figsize=(20, 20), sharex=True)
 
     for j in trange(0, data.count_journeys()):
@@ -38,9 +43,9 @@ def plot_imu_sensors():
         # timestamp to datetime
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
 
-        x_color = 'red'
-        y_color = 'green'
-        z_color = 'blue'
+        x_color = 'crimson'
+        y_color = 'seagreen'
+        z_color = 'navy'
         w_color = 'black'
 
         for axis in axs:
@@ -436,9 +441,8 @@ def evaluate_lstm_autoencoder(model_version, features=['speed', 'ch0'], percenti
     loss_df = pd.read_pickle(f"./results/model_{model_version}/loss.pkl")
 
     fig, axs = plt.subplots()
-    axs.plot(loss_df["Loss"], 'b-', label="Loss", linewidth=0.5, alpha=0.5)
+    axs.plot(loss_df["Loss"], color=color_loss, label="Loss", linewidth=0.5, alpha=0.5)
 
-    print("Plot training loss")
     for j in loss_df['Journey'].unique():
         rect_x = loss_df[loss_df['Journey'] == j].index[0]
         rect_y = loss_df[loss_df['Journey'] == j].index[-1]
@@ -475,25 +479,27 @@ def evaluate_lstm_autoencoder(model_version, features=['speed', 'ch0'], percenti
         # we calculate reconstruction error (mean absolute error)
         mean_absolute_error = np.mean(np.abs(prediction - df_transformed), axis=1)[:, 1]
 
-        print(mean_absolute_error.shape)
+        # print(mean_absolute_error.shape)
         errors.append(mean_absolute_error)
 
     # we flatten the list of errors
     training_errors = np.concatenate(errors)
 
-    # we use the giben percentile as threshold
+    # we use the given percentile as threshold
     max_train_error = np.percentile(training_errors, percentil_threshold)
+
+    print(f"max_train_error for model_version {model_version}: {max_train_error}")
 
 
     # plot error distribution
     plt.title('Error Distribution')
     plt.yscale("log")
 
-    hist = plt.hist(training_errors, bins=30, density=True, label="reconstruction error", color="#D3D3D3", width=0.7)
+    hist = plt.hist(training_errors, bins=30, density=True, label="reconstruction error", color=color_error, width=0.7)
 
     # we limit the hight of the threshold line, so it does not look too aggressive
     y_ver_max = hist[0][0] * 0.8
-    plt.axvline(x=max_train_error, ymax=y_ver_max, color='r', label="reconstruction threshold")
+    plt.axvline(x=max_train_error, ymax=y_ver_max, color=color_anomaly, label="reconstruction threshold")
 
     plt.ylabel("Mean Absolute Error (log)")
     plt.xlabel("Reconstruction Error")
@@ -525,18 +531,17 @@ def evaluate_lstm_autoencoder(model_version, features=['speed', 'ch0'], percenti
         # again we only look for the errors of the profile reconstruction
         anomalies = test_error[:, 1] >= max_train_error
 
-        to_mm = 10 ** 7
         axs[j].set_title(f"Journey {j} - {np.sum(anomalies)} anomalies found")
 
         # reset scale
         axs[j].set_yscale("linear")
 
-        axs[j].scatter(df_journey[anomalies]["distance"], df_journey[anomalies]["ch0"] * to_mm, color="red", s=1.5, alpha=0.1)
-        axs[j].plot(df_journey["distance"], df_journey["ch0"] * to_mm, color="#D3D3D3", linewidth=0.2, alpha=0.6)
+        axs[j].scatter(df_journey[anomalies]["distance"], df_journey[anomalies]["ch0"], color=color_anomaly, s=1.5, alpha=0.1)
+        axs[j].plot(df_journey["distance"], df_journey["ch0"], color=color_sensor, linewidth=0.2, alpha=alpha_sonsor)
 
 
     for ax in axs.flat:
-        ax.set(xlabel='Track distance [m]', ylabel='Track Profile [mm]')
+        ax.set(xlabel='Track distance [m]', ylabel='ch0 [m/s²]')
 
     plt.tight_layout()
     plt.show()
@@ -662,20 +667,20 @@ def compare_dtw_with_autoencoder(journey=0, features=['speed', 'ch0_fft'], perce
     adc1_df_anomalies_dtw = adc1_df["DTWDistance"] >= np.nanpercentile(adc1_df["DTWDistance"], percentile_threshold)
     adc2_df_anomalies_dtw = adc2_df["DTWDistance"] >= np.nanpercentile(adc2_df["DTWDistance"], percentile_threshold)
 
-    axs[0, 0].scatter(adc1_df[adc1_df_anomalies_dtw]["distance"], adc1_df[adc1_df_anomalies_dtw]["ch0"], color="red", alpha=0.1, s=1.5)
-    axs[0, 0].plot(adc1_df["distance"], adc1_df["ch0"], color="#D3D3D3", linewidth=0.2, alpha=0.6)
+    axs[0, 0].scatter(adc1_df[adc1_df_anomalies_dtw]["distance"], adc1_df[adc1_df_anomalies_dtw]["ch0"], color=color_anomaly, alpha=0.1, s=1.5)
+    axs[0, 0].plot(adc1_df["distance"], adc1_df["ch0"], color=color_sensor, linewidth=0.2, alpha=alpha_sonsor)
     axs[0, 0].set_title("ADC 1 - DTW Distance")
 
-    axs[0, 1].scatter(adc2_df[adc2_df_anomalies_dtw]["distance"], adc2_df[adc2_df_anomalies_dtw]["ch0"], color="red", alpha=0.1, s=1.5)
-    axs[0, 1].plot(adc2_df["distance"], adc2_df["ch0"], color="#D3D3D3", linewidth=0.2, alpha=0.6)
+    axs[0, 1].scatter(adc2_df[adc2_df_anomalies_dtw]["distance"], adc2_df[adc2_df_anomalies_dtw]["ch0"], color=color_anomaly, alpha=0.1, s=1.5)
+    axs[0, 1].plot(adc2_df["distance"], adc2_df["ch0"], color=color_sensor, linewidth=0.2, alpha=alpha_sonsor)
     axs[0, 1].set_title("ADC 2 - DTW Distance")
 
-    axs[1, 0].scatter(adc1_df[anomalies_adc1_df]["distance"], adc1_df[anomalies_adc1_df]["ch0"], color="red", alpha=0.1,s=1.5)
-    axs[1, 0].plot(adc2_df["distance"], adc2_df["ch0"], color="#D3D3D3", linewidth=0.2, alpha=0.6)
+    axs[1, 0].scatter(adc1_df[anomalies_adc1_df]["distance"], adc1_df[anomalies_adc1_df]["ch0"], color=color_anomaly, alpha=0.1,s=1.5)
+    axs[1, 0].plot(adc2_df["distance"], adc2_df["ch0"], color=color_sensor, linewidth=0.2, alpha=alpha_sonsor)
     axs[1, 0].set_title("ADC 1 - Autoencoder")
 
-    axs[1, 1].scatter(adc2_df[anomalies_adc2_df]["distance"], adc2_df[anomalies_adc2_df]["ch0"], color="red",alpha=0.1, s=1.5)
-    axs[1, 1].plot(adc2_df["distance"], adc2_df["ch0"], color="#D3D3D3", linewidth=0.2, alpha=0.6)
+    axs[1, 1].scatter(adc2_df[anomalies_adc2_df]["distance"], adc2_df[anomalies_adc2_df]["ch0"], color=color_anomaly,alpha=0.1, s=1.5)
+    axs[1, 1].plot(adc2_df["distance"], adc2_df["ch0"], color=color_sensor, linewidth=0.2, alpha=alpha_sonsor)
     axs[1, 1].set_title("ADC 2 - Autoencoder")
 
     for ax in axs.flat:
