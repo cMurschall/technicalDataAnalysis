@@ -29,6 +29,7 @@ import data
 
 
 def plot_imu_sensors():
+    line_with = 0.6
     # make a subplot with 5 rows and 1 column
     fig, axs = plt.subplots(6, 1, figsize=(20, 20), sharex=True)
 
@@ -46,31 +47,32 @@ def plot_imu_sensors():
             axis.axvspan(df['timestamp'].min(), df['timestamp'].max(), facecolor='gray', alpha=0.1)
 
         axs[0].set_title('Acceleration IMU')
-        axs[0].plot(df['timestamp'], df['acc_x'], color=x_color, alpha=.5, )
-        axs[0].plot(df['timestamp'], df['acc_y'], color=y_color, alpha=.5, )
-        axs[0].plot(df['timestamp'], df['acc_z'], color=z_color, alpha=.5, )
+        axs[0].plot(df['timestamp'], df['acc_x'], color=x_color, alpha=.5, linewidth=line_with)
+        axs[0].plot(df['timestamp'], df['acc_y'], color=y_color, alpha=.5, linewidth=line_with)
+        axs[0].plot(df['timestamp'], df['acc_z'], color=z_color, alpha=.5, linewidth=line_with)
+
 
         axs[1].set_title('Gyro IMU')
-        axs[1].plot(df['timestamp'], df['gyro_x'], color=x_color, alpha=.5)
-        axs[1].plot(df['timestamp'], df['gyro_y'], color=y_color, alpha=.5)
-        axs[1].plot(df['timestamp'], df['gyro_y'], color=z_color, alpha=.5)
+        axs[1].plot(df['timestamp'], df['gyro_x'], color=x_color, alpha=.5, linewidth=line_with)
+        axs[1].plot(df['timestamp'], df['gyro_y'], color=y_color, alpha=.5, linewidth=line_with)
+        axs[1].plot(df['timestamp'], df['gyro_y'], color=z_color, alpha=.5, linewidth=line_with)
 
         axs[2].set_title('Velocity IMU')
-        axs[2].plot(df['timestamp'], df['ang_vel_x'], color=x_color, alpha=.5)
-        axs[2].plot(df['timestamp'], df['ang_vel_y'], color=y_color, alpha=.5)
-        axs[2].plot(df['timestamp'], df['ang_vel_z'], color=z_color, alpha=.5)
+        axs[2].plot(df['timestamp'], df['ang_vel_x'], color=x_color, alpha=.5, linewidth=line_with)
+        axs[2].plot(df['timestamp'], df['ang_vel_y'], color=y_color, alpha=.5, linewidth=line_with)
+        axs[2].plot(df['timestamp'], df['ang_vel_z'], color=z_color, alpha=.5, linewidth=line_with)
 
         axs[3].set_title('Orientation IMU')
-        axs[3].plot(df['timestamp'], df['orientation_x'], color=x_color, alpha=.5)
-        axs[3].plot(df['timestamp'], df['orientation_y'], color=y_color, alpha=.5)
-        axs[3].plot(df['timestamp'], df['orientation_z'], color=z_color, alpha=.5)
-        axs[3].plot(df['timestamp'], df['orientation_w'], color=w_color, alpha=.5)
+        axs[3].plot(df['timestamp'], df['orientation_x'], color=x_color, alpha=.5, linewidth=line_with)
+        axs[3].plot(df['timestamp'], df['orientation_y'], color=y_color, alpha=.5, linewidth=line_with)
+        axs[3].plot(df['timestamp'], df['orientation_z'], color=z_color, alpha=.5, linewidth=line_with)
+        axs[3].plot(df['timestamp'], df['orientation_w'], color=w_color, alpha=.5, linewidth=line_with)
 
         axs[4].set_title('Pitch IMU')
-        axs[4].plot(df['timestamp'], df['pitch'], color="black")
+        axs[4].plot(df['timestamp'], df['pitch'], color="black", alpha=.5, linewidth=line_with)
 
         axs[5].set_title('Roll IMU')
-        axs[5].plot(df['timestamp'], df['roll'], color="black")
+        axs[5].plot(df['timestamp'], df['roll'], color="black", alpha=.5, linewidth=line_with)
 
     # set x-axis label
     # format x-axis to show date as day month year
@@ -86,6 +88,8 @@ def plot_imu_sensors():
 
 
 def plot_sensors_adc(adc=1):
+    line_with = 0.6
+
     # make a subplot with 5 rows and 1 column
     fig, axs = plt.subplots(6, 1, figsize=(20, 20), sharex=True)
     for j in trange(0, data.count_journeys()):
@@ -102,22 +106,22 @@ def plot_sensors_adc(adc=1):
             axis.axvspan(df['time'].min(), df['time'].max(), facecolor='gray', alpha=0.1)
 
         axs[0].set_title('Ch0 - ADC' + str(adc))
-        axs[0].plot(df['time'][::every_nth], df['ch0'][::every_nth], color='red')
+        axs[0].plot(df['time'][::every_nth], df['ch0'][::every_nth], color='red', linewidth=line_with)
 
         axs[1].set_title('Ch1 - ADC' + str(adc))
-        axs[1].plot(df['time'][::every_nth], df['ch1'][::every_nth], color='green')
+        axs[1].plot(df['time'][::every_nth], df['ch1'][::every_nth], color='green', linewidth=line_with)
 
         axs[2].set_title('Ch2 - ADC' + str(adc))
-        axs[2].plot(df['time'][::every_nth], df['ch2'][::every_nth], color='blue')
+        axs[2].plot(df['time'][::every_nth], df['ch2'][::every_nth], color='blue', linewidth=line_with)
 
         axs[3].set_title('Ch3 - ADC' + str(adc))
-        axs[3].plot(df['time'][::every_nth], df['ch3'][::every_nth], color='black')
+        axs[3].plot(df['time'][::every_nth], df['ch3'][::every_nth], color='black', linewidth=line_with)
 
         axs[4].set_title('Speed - ADC' + str(adc))
-        axs[4].plot(df['time'][::every_nth], df['speed'][::every_nth], color='orange')
+        axs[4].plot(df['time'][::every_nth], df['speed'][::every_nth], color='orange', linewidth=line_with)
 
         axs[5].set_title('Profile - ADC' + str(adc))
-        axs[5].plot(df['time'][::every_nth], df['ch0_local_distance'][::every_nth], color='orange')
+        axs[5].plot(df['time'][::every_nth], df['ch0_local_distance'][::every_nth], color='orange', linewidth=line_with)
 
     # set x-axis label
     # format x-axis to show date as day month year
