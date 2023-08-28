@@ -600,7 +600,8 @@ if __name__ == '__main__':
     # plot_imu_sensors()
     # find_features()
     # train_lstm_autoencoder(model_version=3)
-    evaluate_lstm_autoencoder(1)
+    # evaluate_lstm_autoencoder(1)
     # measure_similarity()
 
     # report.conduct_pca_on_featues(source='ADC1', count_components=3, feature_lambda=lambda x: np.abs(np.fft.fft(x)))
+    report.compare_dtw_with_autoencoder()

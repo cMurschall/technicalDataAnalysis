@@ -432,7 +432,7 @@ def evaluate_lstm_autoencoder(model_version, features=['speed', 'ch0'], percenti
     loss_df = pd.read_pickle(f"./results/model_{model_version}/loss.pkl")
 
     fig, axs = plt.subplots()
-    axs.plot(loss_df["Loss"], 'r-', label="Loss", linewidth=0.5, alpha=0.5)
+    axs.plot(loss_df["Loss"], 'b-', label="Loss", linewidth=0.5, alpha=0.5)
 
     print("Plot training loss")
     for j in loss_df['Journey'].unique():
@@ -527,15 +527,162 @@ def evaluate_lstm_autoencoder(model_version, features=['speed', 'ch0'], percenti
         # reset scale
         axs[j].set_yscale("linear")
 
-        axs[j].scatter(df_journey[anomalies]["distance"], df_journey[anomalies]["ch0"] * to_mm, color="red", s=1.5)
-        axs[j].plot(df_journey["distance"], df_journey["ch0"] * to_mm, color="#D3D3D3", linewidth=0.2)
+        axs[j].scatter(df_journey[anomalies]["distance"], df_journey[anomalies]["ch0"] * to_mm, color="red", s=1.5, alpha=0.1)
+        axs[j].plot(df_journey["distance"], df_journey["ch0"] * to_mm, color="#D3D3D3", linewidth=0.2, alpha=0.6)
 
 
     for ax in axs.flat:
-        ax.set(xlabel='Track distance [m]', ylabel='Profile in [mm]')
+        ax.set(xlabel='Track distance [m]', ylabel='Track Profile [mm]')
 
     plt.tight_layout()
     plt.show()
+
+
+def compare_dtw_with_autoencoder(journey=0, features=['speed', 'ch0_fft'], percentile_threshold=95):
+
+    from tslearn.metrics import dtw as dtw_tslearn
+
+    # we read the data
+    adc1_df = data.read_as_chuncked(journey, 'ADC1')
+    adc2_df = data.read_as_chuncked(journey, 'ADC2')
+
+    # we add a column for the distance
+    adc1_df["DTWDistance"] = np.nan
+    adc2_df["DTWDistance"] = np.nan
+
+    for j in trange(int(np.max(adc1_df["Bin"]))):
+        try:
+            time_start = np.min(adc1_df[adc1_df["Bin"] == j]["time"])
+            time_end = np.max(adc1_df[adc1_df["Bin"] == j]["time"])
+
+            bin_adc1 = adc1_df.loc[(adc1_df["time"] > time_start) & (adc1_df["time"] < time_end), "ch0"]
+            bin_adc2 = adc2_df.loc[(adc2_df["time"] > time_start) & (adc2_df["time"] < time_end), "ch0"]
+
+            length = np.min([len(bin_adc1), len(bin_adc2)])
+
+            dwt_distance = dtw_tslearn(bin_adc1[:length], bin_adc2[:length])
+
+            adc1_df.loc[(adc1_df["time"] > time_start) & (adc1_df["time"] < time_end), "DTWDistance"] = dwt_distance
+            adc2_df.loc[(adc2_df["time"] > time_start) & (adc2_df["time"] < time_end), "DTWDistance"] = dwt_distance
+
+        except Exception as e:
+            # print(e)
+            # this sometimes fails when the bin is too large (dtw needs to allocate too much memory).
+            # Especially at the start of the journey. We ignore those.
+            pass
+
+
+
+
+    # load model
+    model = tf.keras.models.load_model(f"./results/model_{3}/model.keras")
+    loss_df = pd.read_pickle(f"./results/model_{3}/loss.pkl")
+
+
+    scaler_adc1 = data.create_scaler_for_features('ADC1', features)
+    scaler_adc2 = data.create_scaler_for_features('ADC2', features)
+
+    def get_training_errors(source, scaler):
+        errors = []
+
+        for j in tqdm(loss_df['Journey'].unique()):
+
+            df = data.read_as_chuncked(j, source)
+
+            # transform the features by the same scaler we used for training
+            df_transformed = scaler.transform(df[features]).reshape(-1, 1, 2)
+
+            # we predict the reconstruction
+            prediction = model.predict(df_transformed)
+
+            # we calculate reconstruction error (mean absolute error)
+            mean_absolute_error = np.mean(np.abs(prediction - df_transformed), axis=1)[:, 1]
+
+            errors.append(mean_absolute_error)
+
+        return np.concatenate(errors)
+
+    # precalculated with below code
+    pre_calculated_values = {
+        'ADC1': 0.5171238180316411,
+        'ADC2': 0.4000752337709759
+    }
+
+    if 'ADC1' not in pre_calculated_values:
+
+        # we get the list of errors
+        training_errors_1 = get_training_errors('ADC1', scaler_adc1)
+        # we use the given percentile as threshold
+        max_train_error_1 = np.percentile(training_errors_1, percentile_threshold)
+        print(f"max_train_error_1: {max_train_error_1}")
+    else:
+        max_train_error_1 = pre_calculated_values['ADC1']
+
+    if 'ADC2' not in pre_calculated_values:
+
+        # we get the list of errors
+        training_errors_2 = get_training_errors('ADC2', scaler_adc2)
+        # we use the given percentile as threshold
+        max_train_error_2 = np.percentile(training_errors_2, percentile_threshold)
+        print(f"max_train_error_2: {max_train_error_2}")
+    else:
+        max_train_error_2 = pre_calculated_values['ADC2']
+
+
+    adc1_df["speed"] = np.abs(adc1_df["speed"])
+    adc2_df["speed"] = np.abs(adc2_df["speed"])
+
+    # scale intput data to all our recorded data
+    features_transformed_adc1_df = scaler_adc1.transform(adc1_df[features])
+    features_transformed_adc2_df = scaler_adc2.transform(adc2_df[features])
+
+    # lets evaluate the model for this journey
+    journey_data_adc1_df = features_transformed_adc1_df.reshape(-1, 1, 2)
+    journey_data_adc2_df = features_transformed_adc2_df.reshape(-1, 1, 2)
+
+
+    # this might take some time..
+    test_predict_adc1_df = model.predict(journey_data_adc1_df)
+    test_predict_adc2_df = model.predict(journey_data_adc2_df)
+
+    test_error_adc1_df = np.mean(np.abs(test_predict_adc1_df - journey_data_adc1_df), axis=1)
+    test_error_adc2_df = np.mean(np.abs(test_predict_adc2_df - journey_data_adc2_df), axis=1)
+
+    # again we only look for the errors of the profile reconstruction
+    anomalies_adc1_df = test_error_adc1_df[:, 1] >= max_train_error_1
+    anomalies_adc2_df = test_error_adc2_df[:, 1] >= max_train_error_2
+
+    fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(10, 10), sharex=True, sharey=True)
+
+    # Define 95 % percentile of max as threshold.
+    adc1_df_anomalies_dtw = adc1_df["DTWDistance"] >= np.nanpercentile(adc1_df["DTWDistance"], percentile_threshold)
+    adc2_df_anomalies_dtw = adc2_df["DTWDistance"] >= np.nanpercentile(adc2_df["DTWDistance"], percentile_threshold)
+
+    axs[0, 0].scatter(adc1_df[adc1_df_anomalies_dtw]["distance"], adc1_df[adc1_df_anomalies_dtw]["ch0"], color="red", alpha=0.1, s=1.5)
+    axs[0, 0].plot(adc1_df["distance"], adc1_df["ch0"], color="#D3D3D3", linewidth=0.2, alpha=0.6)
+    axs[0, 0].set_title("ADC 1 - DTW Distance")
+
+    axs[0, 1].scatter(adc2_df[adc2_df_anomalies_dtw]["distance"], adc2_df[adc2_df_anomalies_dtw]["ch0"], color="red", alpha=0.1, s=1.5)
+    axs[0, 1].plot(adc2_df["distance"], adc2_df["ch0"], color="#D3D3D3", linewidth=0.2, alpha=0.6)
+    axs[0, 1].set_title("ADC 2 - DTW Distance")
+
+    axs[1, 0].scatter(adc1_df[anomalies_adc1_df]["distance"], adc1_df[anomalies_adc1_df]["ch0"], color="red", alpha=0.1,s=1.5)
+    axs[1, 0].plot(adc2_df["distance"], adc2_df["ch0"], color="#D3D3D3", linewidth=0.2, alpha=0.6)
+    axs[1, 0].set_title("ADC 1 - Autoencoder")
+
+    axs[1, 1].scatter(adc2_df[anomalies_adc2_df]["distance"], adc2_df[anomalies_adc2_df]["ch0"], color="red",alpha=0.1, s=1.5)
+    axs[1, 1].plot(adc2_df["distance"], adc2_df["ch0"], color="#D3D3D3", linewidth=0.2, alpha=0.6)
+    axs[1, 1].set_title("ADC 2 - Autoencoder")
+
+    for ax in axs.flat:
+        ax.set(xlabel='Distance [m]', ylabel='Signal ch0 [m/s²]')
+
+    # Hide x labels and tick labels for top plots and y ticks for right plots.
+    for ax in axs.flat:
+        ax.label_outer()
+
+    fig.suptitle(f"Journey {journey + 1} - DWT and Autoencoder Anomaly Detection")
+    return plt
 
 
 ### Helpers
@@ -555,3 +702,4 @@ def align_yaxis(ax1, ax2):
     t_new_b = extrema[1][1] - tot_span * (extrema[1][1] - extrema[1][0])
     axes[0].set_ylim(extrema[0][0], b_new_t)
     axes[1].set_ylim(t_new_b, extrema[1][1])
+
