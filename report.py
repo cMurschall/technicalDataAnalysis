@@ -30,6 +30,7 @@ import data
 color_loss = 'cornflowerblue'
 color_anomaly = 'crimson'
 color_sensor = 'black'
+
 color_error = "#D3D3D3"
 alpha_sonsor = 0.4
 
